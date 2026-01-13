@@ -207,7 +207,7 @@ def stuff_ctypes():
         raise Exception("CreateThread failed")
     else:
         print(
-            f"{Fore.LIGHTBLUE_EX}Created thread with ID: {thread_id.value}{Style.RESET_ALL}"
+            f"{Fore.LIGHTBLUE_EX}\t o Created thread with ID: {thread_id.value}{Style.RESET_ALL}"
         )
 
     # ==================== wait for thread ====================
