@@ -1,0 +1,4 @@
+.venv/
+.vscode/
+msfvenom_cache/
+__pycache__/
