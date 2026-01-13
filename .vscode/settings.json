@@ -1,0 +1,5 @@
+{
+  "python.analysis.typeCheckingMode": "off",
+  "python.analysis.extraPaths": ["./modules"],
+  "python.analysis.autoImportCompletions": true
+}
