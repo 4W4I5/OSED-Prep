@@ -1,7 +1,7 @@
 import subprocess
 import tempfile
 import os
-from typing import Literal, Union, List
+from typing_extensions import Literal, Union, List
 from colorama import Fore, Back, Style
 
 

@@ -1,7 +1,7 @@
 import subprocess
 import tempfile
 import os
-from typing import Literal, Optional
+from typing_extensions import Literal, Optional
 from colorama import Fore, Back, Style
 import hashlib
 import pickle

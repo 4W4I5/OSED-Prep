@@ -2,7 +2,7 @@
 # Exact drop-in replacement for nasm_module.py using Keystone
 # Fixed: Removed invalid .close(), improved multi-instruction handling for labels
 
-from typing import Union, List, Literal
+from typing_extensions import Union, List, Literal
 from colorama import Fore, Back, Style
 from keystone import (
     Ks,
