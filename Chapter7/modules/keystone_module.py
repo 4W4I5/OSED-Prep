@@ -12,6 +12,43 @@ from keystone import (
     KS_MODE_64,
     KS_OPT_SYNTAX_INTEL,
 )
+from capstone import Cs, CS_ARCH_X86, CS_MODE_32, CS_MODE_64
+
+
+def fix_nulls(lines: List[str]) -> None:
+    """
+    Fix potential null byte issues in assembly lines by replacing problematic instructions.
+    """
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        parts = line.split()
+        if len(parts) == 2 and parts[0] == 'push' and parts[1].startswith('0x'):
+            try:
+                val = int(parts[1], 16)
+                if val == 0:
+                    lines[i] = 'mov eax, 0xffffffff'
+                    lines.insert(i + 1, 'not eax')
+                    lines.insert(i + 2, 'push eax')
+                    i += 3  # skip the inserted lines
+                    continue
+            except ValueError:
+                pass
+        elif len(parts) == 3 and parts[0] == 'sub' and parts[1] == 'esp,' and parts[2].startswith('0x'):
+            try:
+                val = int(parts[2], 16)
+                neg_val = (-val) & 0xFFFFFFFF
+                lines[i] = f'add esp, 0x{neg_val:08x}'
+            except ValueError:
+                pass
+        elif len(parts) == 3 and parts[0] == 'add' and parts[1] == 'esp,' and parts[2].startswith('0x'):
+            try:
+                val = int(parts[2], 16)
+                neg_val = (-val) & 0xFFFFFFFF
+                lines[i] = f'sub esp, 0x{neg_val:08x}'
+            except ValueError:
+                pass
+        i += 1
 
 
 def keystone_asm(
@@ -41,6 +78,9 @@ def keystone_asm(
         line = line.strip()
         if line:
             cleaned_lines.append(line)
+
+    # Fix potential null bytes
+    fix_nulls(cleaned_lines)
 
     # Best practice for Keystone: join with "; " — perfect for labels and complex code
     asm_source = "; ".join(cleaned_lines)
@@ -80,6 +120,19 @@ def keystone_asm(
             print(
                 f"\t{Fore.YELLOW}[i] Stripped {stripped_count} trailing null byte(s){Style.RESET_ALL}"
             )
+        print(f"\t{Fore.BLUE}o Generated Keystone output:{Style.RESET_ALL}")
+        md = Cs(CS_ARCH_X86, mode)
+        offset = 0
+        for i, (addr, size, mnemonic, op_str) in enumerate(md.disasm_lite(shellcode, 0x1000)):
+            if offset >= len(shellcode):
+                break
+            opcode_bytes = shellcode[offset:offset+size]
+            opcode = ''.join(f'{b:02x}' for b in opcode_bytes)
+            has_null = '00' in opcode
+            color = f"{Fore.RED}{Back.YELLOW}" if has_null else Fore.CYAN
+            print(f"\t {Fore.GREEN}{i+1:2d}: {Fore.MAGENTA}{addr:08x}  {color}{opcode:<12}{Style.RESET_ALL} {mnemonic} {op_str}")
+            offset += size
+        print()
         escaped = "".join(f"\\x{b:02x}" for b in shellcode)
         print(
             f"\t\t{Fore.CYAN}[=] Generated {len(shellcode)} bytes:\n\t\t {Fore.YELLOW}{escaped}{Style.RESET_ALL}"
