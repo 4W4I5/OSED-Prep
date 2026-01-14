@@ -79,6 +79,58 @@ def nasm_asm(
         if debug:
             with open(listing_path, "r") as f:
                 listing_lines = f.readlines()
+            has_null = any(
+                '00' in line.split()[2]
+                for line in listing_lines
+                if len(line.split()) >= 3 and all(c in '0123456789abcdefABCDEF' for c in line.split()[1])
+            )
+            if has_null:
+                # Attempt to fix null bytes by negating immediates
+                for line in listing_lines:
+                    parts = line.strip().split()
+                    if len(parts) >= 3 and all(c in '0123456789abcdefABCDEF' for c in parts[1]) and '00' in parts[2]:
+                        source = ' '.join(parts[3:]) if len(parts) > 3 else ''
+                        for idx, ln in enumerate(cleaned_lines):
+                            if ln.strip() == source.strip():
+                                if source.startswith("push 0x") and len(source.split()) == 2:
+                                    imm = source.split()[1]
+                                    try:
+                                        imm_val = int(imm, 16)
+                                        not_imm = ~imm_val & 0xFFFFFFFF
+                                        cleaned_lines[idx] = f"mov eax, 0x{not_imm:08x}"
+                                        cleaned_lines.insert(idx + 1, "not eax")
+                                        cleaned_lines.insert(idx + 2, "push eax")
+                                    except ValueError:
+                                        pass
+                                elif source.startswith("sub esp, 0x") and len(source.split()) == 3:
+                                    imm = source.split()[2]
+                                    try:
+                                        imm_val = int(imm, 16)
+                                        neg_imm = (-imm_val) & 0xFFFFFFFF
+                                        cleaned_lines[idx] = f"add esp, 0x{neg_imm:08x}"
+                                    except ValueError:
+                                        pass
+                                elif source.startswith("add esp, 0x") and len(source.split()) == 3:
+                                    imm = source.split()[2]
+                                    try:
+                                        imm_val = int(imm, 16)
+                                        neg_imm = (-imm_val) & 0xFFFFFFFF
+                                        cleaned_lines[idx] = f"sub esp, 0x{neg_imm:08x}"
+                                    except ValueError:
+                                        pass
+                                break
+                # Rebuild and re-assemble
+                asm_source_lines = [bits_directive] + cleaned_lines
+                asm_source = "\n".join(asm_source_lines)
+                with open(asm_path, "w") as f:
+                    f.write(asm_source)
+                subprocess.run(
+                    ["nasm", "-f", "bin", "-l", listing_path, asm_path, "-o", bin_path],
+                    check=True,
+                    capture_output=True,
+                )
+                with open(listing_path, "r") as f:
+                    listing_lines = f.readlines()
             print(f"\t{Fore.BLUE}o Generated NASM output:{Style.RESET_ALL}")
             for i, line in enumerate(listing_lines, 1):
                 line = line.rstrip()
