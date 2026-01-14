@@ -19,5 +19,5 @@ def hashFuncName(functionName):
         if ror_count < len(esi)-1:
             edx = _ror_str(edx, 0x0D)
         ror_count += 1
-    print(f"\t{colorama.Fore.GREEN}o Function: {functionName} --> Hash: {hex(edx)}{colorama.Style.RESET_ALL}")
+    print(f"\t {colorama.Fore.GREEN}o Function: {functionName} --> Hash: {hex(edx)}{colorama.Style.RESET_ALL}")
     return hex(edx)
