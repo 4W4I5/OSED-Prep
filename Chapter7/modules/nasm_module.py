@@ -51,22 +51,23 @@ def nasm_asm(
     asm_source_lines = [bits_directive] + cleaned_lines
     asm_source = "\n".join(asm_source_lines)
 
-    if debug:
-        print(f"\t{Fore.RED}o Generating Opcode for NASM:{Style.RESET_ALL}")
-        for i, ln in enumerate(asm_source_lines[1:], 1):
-            print(f"\t    {Fore.CYAN}{i:2d}: {Fore.YELLOW}{ln}{Style.RESET_ALL}")
-        print()
+    # if debug:
+    #     print(f"\t{Fore.RED}o Generating Opcode for NASM:{Style.RESET_ALL}")
+    #     for i, ln in enumerate(asm_source_lines[1:], 1):
+    #         print(f"\t    {Fore.CYAN}{i:2d}: {Fore.YELLOW}{ln}{Style.RESET_ALL}")
+    #     print()
 
     with tempfile.TemporaryDirectory() as tmpdir:
         asm_path = os.path.join(tmpdir, "shell.asm")
         bin_path = os.path.join(tmpdir, "shell.bin")
+        listing_path = os.path.join(tmpdir, "listing.lst")
 
         with open(asm_path, "w") as f:
             f.write(asm_source)
 
         try:
             subprocess.run(
-                ["nasm", "-f", "bin", asm_path, "-o", bin_path],
+                ["nasm", "-f", "bin", "-l", listing_path, asm_path, "-o", bin_path],
                 check=True,
                 capture_output=True,
             )
@@ -74,6 +75,49 @@ def nasm_asm(
             raise RuntimeError(
                 f"{Back.WHITE}{Fore.RED}NASM assembly failed:\n{e.stderr.decode('utf-8', errors='replace')}{Style.RESET_ALL}"
             )
+
+        if debug:
+            with open(listing_path, "r") as f:
+                listing_lines = f.readlines()
+            print(f"\t{Fore.BLUE}o Generated NASM output:{Style.RESET_ALL}")
+            for i, line in enumerate(listing_lines, 1):
+                line = line.rstrip()
+                if line.strip():
+                    parts = line.strip().split()
+                    if len(parts) >= 3:
+                        # Check if parts[1] is a hex address
+                        if all(c in '0123456789abcdefABCDEF' for c in parts[1]):
+                            address = parts[1]
+                            opcode = parts[2]
+                            source = ' '.join(parts[3:]) if len(parts) > 3 else ''
+                            cleaned_line = f"{address}  {opcode:<12} {source}"
+                            if '00' in opcode:
+                                color = f"{Fore.RED}{Back.YELLOW}"
+                            else:
+                                color = Fore.CYAN
+                        else:
+                            cleaned_line = ' '.join(parts[1:])
+                            if ":" in cleaned_line:
+                                color = Fore.MAGENTA
+                                cleaned_line = '\t' + cleaned_line
+                            else:
+                                color = Fore.CYAN
+                    else:
+                        cleaned_line = ' '.join(parts[1:]) if parts else line
+                        if ":" in cleaned_line:
+                            color = Fore.MAGENTA
+                            cleaned_line = '\t' + cleaned_line
+                        else:
+                            color = Fore.CYAN
+                else:
+                    cleaned_line = line
+                    color = Fore.CYAN
+
+                # Skip BITS directives
+                if cleaned_line.strip().startswith("BITS"):
+                    continue
+                print(f"\t    {Fore.GREEN}{i:2d}: {color}{cleaned_line}{Style.RESET_ALL}")
+            print()
 
         with open(bin_path, "rb") as f:
             shellcode = f.read()
