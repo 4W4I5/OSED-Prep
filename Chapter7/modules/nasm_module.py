@@ -151,14 +151,14 @@ def nasm_asm(
                             cleaned_line = ' '.join(parts[1:])
                             if ":" in cleaned_line:
                                 color = Fore.MAGENTA
-                                cleaned_line = '\t' + cleaned_line
+                                cleaned_line = '\t\t  ' + cleaned_line
                             else:
                                 color = Fore.CYAN
                     else:
                         cleaned_line = ' '.join(parts[1:]) if parts else line
                         if ":" in cleaned_line:
                             color = Fore.MAGENTA
-                            cleaned_line = '\t' + cleaned_line
+                            cleaned_line = '\t\t  ' + cleaned_line
                         else:
                             color = Fore.CYAN
                 else:
