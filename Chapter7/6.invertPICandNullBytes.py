@@ -179,7 +179,7 @@ from tkinter.tix import Tree
 from colorama import Back, Fore, Style
 
 # Custom modules
-from modules.keystone_module import keystone_asm
+# from modules.keystone_module import keystone_asm
 from modules.msfvenom_module import generatePayload
 from modules.nasm_module import nasm_asm
 from modules.rorHash_module import hashFuncName
@@ -189,37 +189,31 @@ from modules.rorHash_module import hashFuncName
 def ret_asm() -> str:
 
     asm = f"""
-    START:
+    START_1:
         int3                                        ; Remove when not debugging  
     
-    SETUP_STACK:
+    SETUP_STACK_2:
         mov ebp, esp                                ; Move ESP to EBP, setup stack frame
         sub esp, 0x210                              ; Allocate 528 bytes
-        call find_kernel32                          ; Call find_kernel32
-        push {hashFuncName("TerminateProcess")}     ; Push hash of TerminateProcess
-        call find_function                          ; Call find_function
-        xor ecx, ecx                                ; Zero out ECX
-        push ecx                                    ; Push 0 (exit code)
-        push 0xFFFFFFFF                             ; Push -1 (current process handle)
-        call eax                                    ; Call TerminateProcess
+        
 
-    find_kernel32:
+    FIND_KERNEL32_3:
         xor ecx, ecx                                ; Zero out ECX
         mov esi, fs:[ecx + 0x30]                    ; move PEB to ESI
         mov esi, [esi + 0x0C]                       ; move PEB_LDR_DATA to ESI
         mov esi, [esi + 0x1C]                       ; move InInitializationOrderModuleList to ESI
 
-    find_next_module:
+    FIND_NEXT_MODULE_4:
         mov ebx, [esi + 0x08]                       ; move base addr of module to EBX
         mov edi, [esi + 0x20]                       ; move module name to EDI
         mov esi, [esi]                              ; move pointer to [FLINK] next module to ESI
         cmp [edi + 12*2], cx                        ; find null terminator at offset 24 (12th wchar)
-        jne find_next_module                        ; if not NULL, keep looking
+        jne FIND_NEXT_MODULE_4                        ; if not NULL, keep looking
         ret
 
     ; At this point, EBX holds the base address of kernel32.dll
 
-    find_function:
+    FIND_FUNCTION_5:
         pushad                                      ; Save all registers
         mov eax, [ebx + 0x3C]                       ; Offset to IMAGE_NT_HEADERS (BASE + 0x3C)
         mov edi, [ebx + eax + 0x78]                 ; Export Table Dir RVA (IMAGE_NT_HEADERS + 0x78)
@@ -229,30 +223,30 @@ def ret_asm() -> str:
         add eax, ebx                                ; Address of Names VMA (RVA + BASE)
         mov [ebp - 4], eax                          ; Store Address of Names VMA in [EBP-4] for later
 
-    search_loop:
-        jecxz find_function_done                    ; If ECX is 0, we are done
+    SEARCH_LOOP_6:
+        jecxz FIND_FUNCTION_DONE_11                 ; If ECX is 0, we are done
         dec ecx                                     ; Decrement ECX
         mov eax, [ebp - 4]                          ; Load Address of Names VMA
         mov esi, [eax + ecx*4]                      ; Get RVA of function name
         add esi, ebx                                ; Get VMA of function name
 
-    compute_hash:
+    COMPUTE_HASH_7:
         xor eax, eax                                ; Zero out EAX (hash accumulator)
         cdq                                         ; Clear EDX (Takes sign bit of EAX and fills EDX with 0s or 1s)
         cld                                         ; Clear direction flag
 
-    hash_loop:
+    HASH_LOOP_8:
         lodsb                                       ; Load byte at DS:ESI into AL, increment ESI
         test al, al                                 ; Test if AL is NULL terminator
-        jz hash_done                                ; If zero, we are done
+        jz HASH_DONE_9                              ; If zero, we are done
         ror edx, 0xd                                ; Rotate EDX right by 13
         add edx, eax                                ; Add AL to EDX
-        jmp hash_loop                               ; Repeat
-    hash_done:
+        jmp HASH_LOOP_8                             ; Repeat
+    HASH_DONE_9:
 
-    compare_hash_to_function:
+    COMPARE_HASH_TO_FUNCTION_10:
         cmp edx, [esp + 0x24]                       ; Compare computed hash (EDX) to target hash (on stack)
-        jnz search_loop                             ; If not equal, continue searching
+        jnz SEARCH_LOOP_6                           ; If not equal, continue searching
         mov edx, [edi + 0x24]                       ; AddressofNameOrdinals RVA
         add edx, ebx                                ; AddressofNameOrdinals VMA
         mov cx, [edx + ecx*2]                       ; Get the ordinal
@@ -261,11 +255,21 @@ def ret_asm() -> str:
         mov eax, [edx + ecx*4]                      ; Get function RVA
         add eax, ebx                                ; Get function VMA
         mov [esp + 0x1c], eax                       ; Store function address in EAX(stack) for return
-    find_function_done:
+    
+    FIND_FUNCTION_DONE_11:
         popad                                       ; Restore all registers
         ret
 
-
+    RESOLVE_SYMBOLS_KERNEL32_12:
+        push {hashFuncName("TerminateProcess")}     ; Push hash of TerminateProcess
+        call [ebp + 0x04]                 ; Call FIND_FUNCTION
+        mov [ebp + 0x10], eax                       ; Store TerminateProcess address in [EBP+0x10]
+    
+    EXEC_SHELLCODE_13:
+        xor ecx, ecx                                ; Zero out ECX
+        push ecx                                    ; Push 0 (exit code)
+        push 0xFFFFFFFF                             ; Push -1 (current process handle)
+        call eax                                    ; Call TerminateProcess
 
     """
 
