@@ -1,6 +1,7 @@
 import subprocess
 import tempfile
 import os
+import re
 from typing_extensions import Literal, Union, List
 from colorama import Fore, Back, Style
 
@@ -47,6 +48,23 @@ def nasm_asm(
         line = line.strip()
         if line:  # only add non-empty lines after cleaning
             cleaned_lines.append(line)
+
+    # Process labels: number them sequentially in order of appearance
+    labels = []
+    for line in cleaned_lines:
+        if line.endswith(':'):
+            label = line[:-1].strip()
+            labels.append(label)
+
+    label_map = {}
+    for i, label in enumerate(labels, 1):
+        label_map[label] = f"{label}_{i:02d}"
+
+    # Replace all label references with numbered versions
+    for i, line in enumerate(cleaned_lines):
+        for old, new in label_map.items():
+            line = re.sub(r'\b' + re.escape(old) + r'\b', new, line)
+        cleaned_lines[i] = line
 
     # Build final assembly source with BITS directive
     asm_source_lines = [bits_directive] + cleaned_lines
