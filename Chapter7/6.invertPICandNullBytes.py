@@ -189,87 +189,99 @@ from modules.rorHash_module import hashFuncName
 def ret_asm() -> str:
 
     asm = f"""
-    START_1:
+    START:
         int3                                        ; Remove when not debugging  
     
-    SETUP_STACK_2:
-        mov ebp, esp                                ; Move ESP to EBP, setup stack frame
-        sub esp, 0x210                              ; Allocate 528 bytes
+    SETUP_STACK:
+        mov ebp, esp                                ; Initialize stack frame
+        sub esp, 0x210                              ; Allocate 528 bytes of local stack space
         
 
-    FIND_KERNEL32_3:
-        xor ecx, ecx                                ; Zero out ECX
-        mov esi, fs:[ecx + 0x30]                    ; move PEB to ESI
-        mov esi, [esi + 0x0C]                       ; move PEB_LDR_DATA to ESI
-        mov esi, [esi + 0x1C]                       ; move InInitializationOrderModuleList to ESI
+    FIND_KERNEL32:
+        xor ecx, ecx                                ; ECX = 0
+        mov esi, fs:[ecx + 0x30]                    ; ESI = PEB (Process Environment Block)
+        mov esi, [esi + 0x0C]                       ; ESI = PEB_LDR_DATA (loader data structure)
+        mov esi, [esi + 0x1C]                       ; ESI = InInitializationOrderModuleList (first module entry)
 
-    FIND_NEXT_MODULE_4:
-        mov ebx, [esi + 0x08]                       ; move base addr of module to EBX
-        mov edi, [esi + 0x20]                       ; move module name to EDI
-        mov esi, [esi]                              ; move pointer to [FLINK] next module to ESI
-        cmp [edi + 12*2], cx                        ; find null terminator at offset 24 (12th wchar)
-        jne FIND_NEXT_MODULE_4                        ; if not NULL, keep looking
-        ret
+    FIND_NEXT_MODULE:
+        mov ebx, [esi + 0x08]                       ; EBX = base address of current module
+        mov edi, [esi + 0x20]                       ; EDI = pointer to module name (wide string)
+        mov esi, [esi]                              ; ESI = next module in linked list (FLINK)
+        cmp [edi + 12*2], cx                        ; Check for null terminator at offset 24 (12th wide char)
+        jne FIND_NEXT_MODULE                        ; If not kernel32, loop to next module
 
-    ; At this point, EBX holds the base address of kernel32.dll
 
-    FIND_FUNCTION_5:
-        pushad                                      ; Save all registers
-        mov eax, [ebx + 0x3C]                       ; Offset to IMAGE_NT_HEADERS (BASE + 0x3C)
-        mov edi, [ebx + eax + 0x78]                 ; Export Table Dir RVA (IMAGE_NT_HEADERS + 0x78)
-        add edi, ebx                                ; Export Table Dir VMA (BASE + RVA)
-        mov ecx, [edi + 0x18]                       ; Number of Names
-        mov eax, [edi + 0x20]                       ; Address of Names RVA
-        add eax, ebx                                ; Address of Names VMA (RVA + BASE)
-        mov [ebp - 4], eax                          ; Store Address of Names VMA in [EBP-4] for later
-
-    SEARCH_LOOP_6:
-        jecxz FIND_FUNCTION_DONE_11                 ; If ECX is 0, we are done
-        dec ecx                                     ; Decrement ECX
-        mov eax, [ebp - 4]                          ; Load Address of Names VMA
-        mov esi, [eax + ecx*4]                      ; Get RVA of function name
-        add esi, ebx                                ; Get VMA of function name
-
-    COMPUTE_HASH_7:
-        xor eax, eax                                ; Zero out EAX (hash accumulator)
-        cdq                                         ; Clear EDX (Takes sign bit of EAX and fills EDX with 0s or 1s)
-        cld                                         ; Clear direction flag
-
-    HASH_LOOP_8:
-        lodsb                                       ; Load byte at DS:ESI into AL, increment ESI
-        test al, al                                 ; Test if AL is NULL terminator
-        jz HASH_DONE_9                              ; If zero, we are done
-        ror edx, 0xd                                ; Rotate EDX right by 13
-        add edx, eax                                ; Add AL to EDX
-        jmp HASH_LOOP_8                             ; Repeat
-    HASH_DONE_9:
-
-    COMPARE_HASH_TO_FUNCTION_10:
-        cmp edx, [esp + 0x24]                       ; Compare computed hash (EDX) to target hash (on stack)
-        jnz SEARCH_LOOP_6                           ; If not equal, continue searching
-        mov edx, [edi + 0x24]                       ; AddressofNameOrdinals RVA
-        add edx, ebx                                ; AddressofNameOrdinals VMA
-        mov cx, [edx + ecx*2]                       ; Get the ordinal
-        mov edx, [edi + 0x1C]                       ; AddressofFunctions RVA
-        add edx, ebx                                ; AddressofFunctions VMA
-        mov eax, [edx + ecx*4]                      ; Get function RVA
-        add eax, ebx                                ; Get function VMA
-        mov [esp + 0x1c], eax                       ; Store function address in EAX(stack) for return
+    FIND_FUNCTION_SHORTEN:
+        jmp FIND_FUNCTION_SHORTEN_BEC               ; Skip over the actual function code
     
-    FIND_FUNCTION_DONE_11:
-        popad                                       ; Restore all registers
-        ret
+    FIND_FUNCTION_RET:
+        pop esi                                     ; Pop return address from call
+        mov [ebp + 0x04], esi                       ; Store function address pointer on stack
+        jmp RESOLVE_SYMBOLS_KERNEL32                ; Jump to symbol resolution
 
-    RESOLVE_SYMBOLS_KERNEL32_12:
-        push {hashFuncName("TerminateProcess")}     ; Push hash of TerminateProcess
-        call [ebp + 0x04]                 ; Call FIND_FUNCTION
+    FIND_FUNCTION_SHORTEN_BEC:
+        call FIND_FUNCTION_RET                      ; Call to set up function pointer, placed here to generate negative offset
+
+
+    ; ===== FIND_FUNCTION: Resolves function addresses via Export Address Table (EAT) =====
+
+    FIND_FUNCTION:
+        pushad                                      ; Save all general purpose registers
+        mov eax, [ebx + 0x3C]                       ; EAX = offset to IMAGE_NT_HEADERS (PE signature location)
+        mov edi, [ebx + eax + 0x78]                 ; EDI = Export Table RVA (relative virtual address)
+        add edi, ebx                                ; EDI = Export Table VMA (absolute virtual memory address)
+        mov ecx, [edi + 0x18]                       ; ECX = number of exported functions
+        mov eax, [edi + 0x20]                       ; EAX = AddressOfNames RVA (pointer table RVA)
+        add eax, ebx                                ; EAX = AddressOfNames VMA
+        mov [ebp - 4], eax                          ; Store on stack for later use in loop
+
+    SEARCH_LOOP:
+        jecxz FIND_FUNCTION_DONE                    ; If ECX is 0, all functions checked, exit
+        dec ecx                                     ; ECX-- (decrement function counter)
+        mov eax, [ebp - 4]                          ; EAX = AddressOfNames VMA
+        mov esi, [eax + ecx*4]                      ; ESI = function name RVA (4 bytes per entry)
+        add esi, ebx                                ; ESI = function name VMA (string location)
+
+    COMPUTE_HASH:
+        xor eax, eax                                ; EAX = 0 (hash accumulator)
+        cdq                                         ; EDX = 0 (extend EAX sign to EDX)
+        cld                                         ; Clear direction flag (ensures LODSB increments ESI)
+
+    HASH_LOOP:
+        lodsb                                       ; AL = byte at [ESI], ESI++ (load function name byte)
+        test al, al                                 ; Check if AL is null terminator (end of string)
+        jz HASH_DONE                                ; If null byte found, hash computation complete
+        ror edx, 0xd                                ; EDX = EDX rotated right 13 bits (ROR hash)
+        add edx, eax                                ; EDX += AL (accumulate hash)
+        jmp HASH_LOOP                               ; Continue hashing next byte
+    HASH_DONE:
+
+    COMPARE_HASH_TO_FUNCTION:
+        cmp edx, [esp + 0x24]                       ; Compare computed hash (EDX) with target hash (passed on stack)
+        jnz SEARCH_LOOP                             ; If hashes don't match, check next function
+        mov edx, [edi + 0x24]                       ; EDX = AddressOfNameOrdinals RVA
+        add edx, ebx                                ; EDX = AddressOfNameOrdinals VMA
+        mov cx, [edx + ecx*2]                       ; CX = ordinal (2 bytes per entry)
+        mov edx, [edi + 0x1C]                       ; EDX = AddressOfFunctions RVA
+        add edx, ebx                                ; EDX = AddressOfFunctions VMA
+        mov eax, [edx + ecx*4]                      ; EAX = function RVA (4 bytes per entry)
+        add eax, ebx                                ; EAX = function VMA (absolute address)
+        mov [esp + 0x1c], eax                       ; Store function address on stack for popad restore
+    
+    FIND_FUNCTION_DONE:
+        popad                                       ; Restore all general purpose registers
+        ret                                         ; Return to caller
+
+    RESOLVE_SYMBOLS_KERNEL32:
+        push {hashFuncName("TerminateProcess")}     ; Push ROR hash of "TerminateProcess" function name
+        call [ebp + 0x04]                           ; Call FIND_FUNCTION to resolve address
         mov [ebp + 0x10], eax                       ; Store TerminateProcess address in [EBP+0x10]
     
-    EXEC_SHELLCODE_13:
-        xor ecx, ecx                                ; Zero out ECX
-        push ecx                                    ; Push 0 (exit code)
-        push 0xFFFFFFFF                             ; Push -1 (current process handle)
-        call eax                                    ; Call TerminateProcess
+    EXEC_SHELLCODE:
+        xor ecx, ecx                                ; ECX = 0
+        push ecx                                    ; Push 0 as exit code parameter
+        push 0xFFFFFFFF                             ; Push -1 (current process handle constant)
+        call eax                                    ; Call TerminateProcess(hProcess=-1, uExitCode=0)
 
     """
 
