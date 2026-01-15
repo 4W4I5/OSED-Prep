@@ -124,11 +124,23 @@ def nasm_asm(
                 source = ' '.join(parts[3:]) if len(parts) > 3 else ''
                 return src_line_no, address, opcode_bytes, source
 
+            def _opcode_has_null_byte(opcode_hex: str) -> bool:
+                """Return True if opcode hex string contains a literal 0x00 byte.
+
+                Important: don't use substring matching ('00' in opcode_hex) because
+                it can false-positive across byte boundaries (e.g. 'C002').
+                """
+                opcode_hex = re.sub(r"[^0-9a-fA-F]", "", opcode_hex or "")
+                for j in range(0, len(opcode_hex) - 1, 2):
+                    if opcode_hex[j : j + 2].lower() == "00":
+                        return True
+                return False
+
             with open(listing_path, "r") as f:
                 listing_lines = f.readlines()
 
             has_null = any(
-                (parsed is not None and '00' in parsed[2])
+                (parsed is not None and _opcode_has_null_byte(parsed[2]))
                 for parsed in (_parse_listing_line(ln) for ln in listing_lines)
             )
             if has_null:
@@ -141,7 +153,7 @@ def nasm_asm(
                     if parsed is None:
                         continue
                     src_line_no, _addr, opcode_bytes, source = parsed
-                    if '00' not in opcode_bytes:
+                    if not _opcode_has_null_byte(opcode_bytes):
                         continue
                     # Our asm file is: line 1 = BITS, then cleaned_lines start at line 2.
                     body_index = src_line_no - 2
@@ -232,7 +244,7 @@ def nasm_asm(
                             else:
                                 src_line_no, address, opcode, source = parsed
                             cleaned_line = f"{address}  {opcode:<12} {source}"
-                            if '00' in opcode:
+                            if _opcode_has_null_byte(opcode):
                                 color = f"{Fore.RED}{Back.YELLOW}"
                             else:
                                 if (
