@@ -212,14 +212,14 @@ def ret_asm() -> str:
 
 
     FIND_FUNCTION_SHORTEN:
-        jmp FIND_FUNCTION_SHORTEN_BEC               ; Skip over the actual function code
+        jmp FIND_FUNCTION_SHORTEN_BNC               ; Skip over the actual function code
     
     FIND_FUNCTION_RET:
         pop esi                                     ; Pop return address from call
         mov [ebp + 0x04], esi                       ; Store function address pointer on stack
-        jmp RESOLVE_SYMBOLS_KERNEL32                ; Jump to symbol resolution
+        jmp RESOLVE_SYMBOLS_KERNEL32                ; Jump to resolve kernel32 symbols
 
-    FIND_FUNCTION_SHORTEN_BEC:
+    FIND_FUNCTION_SHORTEN_BNC:
         call FIND_FUNCTION_RET                      ; Call to set up function pointer, placed here to generate negative offset
 
 
