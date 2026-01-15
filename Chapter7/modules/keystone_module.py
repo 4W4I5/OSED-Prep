@@ -19,6 +19,7 @@ def fix_nulls(lines: List[str]) -> None:
     """
     Fix potential null byte issues in assembly lines by replacing problematic instructions.
     """
+    # Iterate through lines and fix null byte generating instructions
     i = 0
     while i < len(lines):
         line = lines[i]
@@ -27,6 +28,7 @@ def fix_nulls(lines: List[str]) -> None:
             try:
                 val = int(parts[1], 16)
                 if val == 0:
+                    # Replace push 0x0 with mov eax, 0xffffffff; not eax; push eax
                     lines[i] = 'mov eax, 0xffffffff'
                     lines.insert(i + 1, 'not eax')
                     lines.insert(i + 2, 'push eax')
@@ -38,6 +40,7 @@ def fix_nulls(lines: List[str]) -> None:
             try:
                 val = int(parts[2], 16)
                 neg_val = (-val) & 0xFFFFFFFF
+                # Replace sub esp, val with add esp, -val
                 lines[i] = f'add esp, 0x{neg_val:08x}'
             except ValueError:
                 pass
@@ -45,6 +48,7 @@ def fix_nulls(lines: List[str]) -> None:
             try:
                 val = int(parts[2], 16)
                 neg_val = (-val) & 0xFFFFFFFF
+                # Replace add esp, val with sub esp, -val
                 lines[i] = f'sub esp, 0x{neg_val:08x}'
             except ValueError:
                 pass
@@ -57,15 +61,16 @@ def keystone_asm(
     """
     Assemble x86/x64 ASM using Keystone — identical behavior to nasm_module.py
     """
+    # Set Keystone mode based on architecture
     mode = KS_MODE_32 if arch == 32 else KS_MODE_64
     
-    # Normalize input
+    # Normalize input to a list of lines
     if isinstance(CODE, str):
         lines = CODE.splitlines()
     else:
         lines = list(CODE)
 
-    # Clean: strip comments and empty lines
+    # Clean lines: strip whitespace, remove comments, and skip empty lines
     cleaned_lines = []
     for raw_line in lines:
         line = raw_line.strip()
@@ -79,12 +84,13 @@ def keystone_asm(
         if line:
             cleaned_lines.append(line)
 
-    # Fix potential null bytes
+    # Apply null byte fixes to cleaned lines
     fix_nulls(cleaned_lines)
 
-    # Best practice for Keystone: join with "; " — perfect for labels and complex code
+    # Join lines with "; " for Keystone assembly (handles labels and multi-instruction code well)
     asm_source = "; ".join(cleaned_lines)
 
+    # Debug output: print the assembly lines being assembled
     if debug:
         print(f"\t{Fore.RED}o Generating Opcode with Keystone:{Style.RESET_ALL}")
         for i, ln in enumerate(cleaned_lines, 1):
@@ -92,9 +98,11 @@ def keystone_asm(
         print()
 
     try:
+        # Initialize Keystone assembler
         ks = Ks(KS_ARCH_X86, mode)
         ks.syntax = KS_OPT_SYNTAX_INTEL
 
+        # Assemble the code
         encoding, count = ks.asm(asm_source)
 
         if encoding is None or not encoding:
@@ -102,6 +110,7 @@ def keystone_asm(
                 "Keystone failed to assemble any instructions (possible label/syntax issue)"
             )
 
+        # Convert encoding to bytes
         shellcode = bytes(encoding)
 
     except KsError as e:
@@ -110,10 +119,11 @@ def keystone_asm(
             f"{str(e)}"
         )
 
-    # Strip trailing nulls only
+    # Strip trailing null bytes from shellcode
     original_len = len(shellcode)
     shellcode = shellcode.rstrip(b"\x00")
 
+    # Debug output: show disassembly and byte representation
     if debug:
         stripped_count = original_len - len(shellcode)
         if stripped_count:
@@ -121,6 +131,7 @@ def keystone_asm(
                 f"\t{Fore.YELLOW}[i] Stripped {stripped_count} trailing null byte(s){Style.RESET_ALL}"
             )
         print(f"\t{Fore.BLUE}o Generated Keystone output:{Style.RESET_ALL}")
+        # Use Capstone for disassembly in debug mode
         md = Cs(CS_ARCH_X86, mode)
         offset = 0
         for i, (addr, size, mnemonic, op_str) in enumerate(md.disasm_lite(shellcode, 0x1000)):
@@ -138,6 +149,7 @@ def keystone_asm(
             f"\t\t{Fore.CYAN}[=] Generated {len(shellcode)} bytes:\n\t\t {Fore.YELLOW}{escaped}{Style.RESET_ALL}"
         )
 
+    # Warn if interior null bytes are present
     if b"\x00" in shellcode:
         print(
             f"{Back.WHITE}{Fore.RED}[!] Warning: Interior null byte(s) detected in shellcode!{Style.RESET_ALL}"

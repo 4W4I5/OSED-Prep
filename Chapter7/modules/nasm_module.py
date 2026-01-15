@@ -20,6 +20,7 @@ def nasm_asm(
     Trailing null bytes are stripped automatically.
     Interior null bytes trigger a warning.
     """
+    # Set the BITS directive based on architecture
     bits_directive = f"BITS {arch}"
 
     # Normalize input to a list of lines
@@ -47,7 +48,7 @@ def nasm_asm(
         if line:  # only add non-empty lines after cleaning
             cleaned_lines.append(line)
 
-    # Build final assembly source
+    # Build final assembly source with BITS directive
     asm_source_lines = [bits_directive] + cleaned_lines
     asm_source = "\n".join(asm_source_lines)
 
@@ -57,14 +58,17 @@ def nasm_asm(
     #         print(f"\t    {Fore.CYAN}{i:2d}: {Fore.YELLOW}{ln}{Style.RESET_ALL}")
     #     print()
 
+    # Use temporary directory for NASM input/output files
     with tempfile.TemporaryDirectory() as tmpdir:
         asm_path = os.path.join(tmpdir, "shell.asm")
         bin_path = os.path.join(tmpdir, "shell.bin")
         listing_path = os.path.join(tmpdir, "listing.lst")
 
+        # Write the assembly source to a temporary file
         with open(asm_path, "w") as f:
             f.write(asm_source)
 
+        # Assemble the code using NASM
         try:
             subprocess.run(
                 ["nasm", "-f", "bin", "-l", listing_path, asm_path, "-o", bin_path],
@@ -76,6 +80,7 @@ def nasm_asm(
                 f"{Back.WHITE}{Fore.RED}NASM assembly failed:\n{e.stderr.decode('utf-8', errors='replace')}{Style.RESET_ALL}"
             )
 
+        # If debug mode, analyze the listing for null bytes and attempt automatic fixes
         if debug:
             with open(listing_path, "r") as f:
                 listing_lines = f.readlines()
@@ -85,7 +90,7 @@ def nasm_asm(
                 if len(line.split()) >= 3 and all(c in '0123456789abcdefABCDEF' for c in line.split()[1])
             )
             if has_null:
-                # Attempt to fix null bytes by negating immediates
+                # Attempt to fix null bytes by negating immediates in push/sub/add instructions
                 for line in listing_lines:
                     parts = line.strip().split()
                     if len(parts) >= 3 and all(c in '0123456789abcdefABCDEF' for c in parts[1]) and '00' in parts[2]:
@@ -119,7 +124,7 @@ def nasm_asm(
                                     except ValueError:
                                         pass
                                 break
-                # Rebuild and re-assemble
+                # Rebuild and re-assemble the source after applying fixes
                 asm_source_lines = [bits_directive] + cleaned_lines
                 asm_source = "\n".join(asm_source_lines)
                 with open(asm_path, "w") as f:
@@ -131,6 +136,7 @@ def nasm_asm(
                 )
                 with open(listing_path, "r") as f:
                     listing_lines = f.readlines()
+            # Print the NASM listing output in debug mode
             print(f"\t{Fore.BLUE}o Generated NASM output:{Style.RESET_ALL}")
             for i, line in enumerate(listing_lines, 1):
                 line = line.rstrip()
@@ -171,12 +177,15 @@ def nasm_asm(
                 print(f"\t    {Fore.GREEN}{i:2d}: {color}{cleaned_line}{Style.RESET_ALL}")
             print()
 
+        # Read the generated binary shellcode
         with open(bin_path, "rb") as f:
             shellcode = f.read()
 
+    # Strip trailing null bytes from the shellcode
     original_len = len(shellcode)
     shellcode = shellcode.rstrip(b"\x00")  # strip trailing nulls only
 
+    # Debug output for stripped bytes and shellcode
     if debug:
         stripped_count = original_len - len(shellcode)
         if stripped_count:
@@ -189,6 +198,7 @@ def nasm_asm(
             f"\t\t{Fore.CYAN}[=] Generated {len(shellcode)} bytes:\n\t\t    {Fore.YELLOW}{escaped}{Style.RESET_ALL}"
         )
 
+    # Warn if interior null bytes are present
     if b"\x00" in shellcode:
         print(
             f"{Back.WHITE}{Fore.RED}[!] Warning: Interior null byte(s) detected in shellcode!{Style.RESET_ALL}"
