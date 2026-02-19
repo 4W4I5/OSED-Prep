@@ -3,3 +3,4 @@
 msfvenom_cache/
 __pycache__/
 chapter7/test.py
+*.exe
