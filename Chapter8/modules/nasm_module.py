@@ -1,9 +1,10 @@
-import subprocess
-import tempfile
 import os
 import re
-from typing_extensions import Literal, Union, List
-from colorama import Fore, Back, Style
+import subprocess
+import tempfile
+
+from colorama import Back, Fore, Style
+from typing_extensions import List, Literal, Union
 
 
 def nasm_asm(
@@ -52,10 +53,20 @@ def nasm_asm(
             cleaned_lines.append(line)
             line_origins.append("user")
 
+    # Build original line numbers for user lines
+    original_line_nums = []
+    user_line_counter = 1
+    for origin in line_origins:
+        if origin == "user":
+            original_line_nums.append(user_line_counter)
+            user_line_counter += 1
+        else:
+            original_line_nums.append(None)
+
     # Process labels: number them sequentially in order of appearance
     labels = []
     for line in cleaned_lines:
-        if line.endswith(':'):
+        if line.endswith(":"):
             label = line[:-1].strip()
             labels.append(label)
 
@@ -66,7 +77,7 @@ def nasm_asm(
     # Replace all label references with numbered versions
     for i, line in enumerate(cleaned_lines):
         for old, new in label_map.items():
-            line = re.sub(r'\b' + re.escape(old) + r'\b', new, line)
+            line = re.sub(r"\b" + re.escape(old) + r"\b", new, line)
         cleaned_lines[i] = line
 
     # Build final assembly source with BITS directive
@@ -90,8 +101,9 @@ def nasm_asm(
             f.write(asm_source)
 
         # Assemble the code using NASM
+        result = None
         try:
-            subprocess.run(
+            result = subprocess.run(
                 ["nasm", "-f", "bin", "-l", listing_path, asm_path, "-o", bin_path],
                 check=True,
                 capture_output=True,
@@ -101,8 +113,36 @@ def nasm_asm(
                 f"{Back.WHITE}{Fore.RED}NASM assembly failed:\n{e.stderr.decode('utf-8', errors='replace')}{Style.RESET_ALL}"
             )
 
-        # If debug mode, analyze the listing for null bytes and attempt automatic fixes
-        if debug:
+        # Check for warnings and fix them always
+        has_warnings = "warning" in result.stderr.decode("utf-8", errors="replace")
+        if has_warnings:
+            # Apply push fixes for warnings
+            for i in range(len(cleaned_lines) - 1, -1, -1):  # reverse to handle inserts
+                line = cleaned_lines[i].strip()
+                if line.startswith("push 0x") and len(line.split()) == 2:
+                    imm = line.split()[1]
+                    try:
+                        int(imm, 16)
+                        cleaned_lines[i] = f"mov edi, {imm}"
+                        line_origins[i] = "auto"
+                        cleaned_lines.insert(i + 1, "push rdi")
+                        line_origins.insert(i + 1, "auto")
+                        original_line_nums.insert(i + 1, None)
+                    except ValueError:
+                        pass
+            # Re-assemble after fixes
+            asm_source_lines = [bits_directive] + cleaned_lines
+            asm_source = "\n".join(asm_source_lines)
+            with open(asm_path, "w") as f:
+                f.write(asm_source)
+            result = subprocess.run(
+                ["nasm", "-f", "bin", "-l", listing_path, asm_path, "-o", bin_path],
+                check=True,
+                capture_output=True,
+            )
+
+            # Analyze the listing for null bytes and attempt automatic fixes always
+
             def _parse_listing_line(raw: str):
                 """Parse a NASM listing line.
 
@@ -116,12 +156,12 @@ def nasm_asm(
                 if not parts[0].isdigit():
                     return None
                 # parts[1] is address in hex for typical NASM listings
-                if not all(c in '0123456789abcdefABCDEF' for c in parts[1]):
+                if not all(c in "0123456789abcdefABCDEF" for c in parts[1]):
                     return None
                 src_line_no = int(parts[0])
                 address = parts[1]
                 opcode_bytes = parts[2]
-                source = ' '.join(parts[3:]) if len(parts) > 3 else ''
+                source = " ".join(parts[3:]) if len(parts) > 3 else ""
                 return src_line_no, address, opcode_bytes, source
 
             def _opcode_has_null_byte(opcode_hex: str) -> bool:
@@ -162,7 +202,9 @@ def nasm_asm(
 
                 # Apply from bottom to top so insertions don't invalidate upcoming indices.
                 seen = set()
-                for body_index, source in sorted(fixes, key=lambda x: x[0], reverse=True):
+                for body_index, source in sorted(
+                    fixes, key=lambda x: x[0], reverse=True
+                ):
                     if body_index in seen:
                         continue
                     seen.add(body_index)
@@ -177,13 +219,11 @@ def nasm_asm(
                         imm = source.split()[1]
                         try:
                             imm_val = int(imm, 16)
-                            not_imm = ~imm_val & 0xFFFFFFFF
-                            cleaned_lines[body_index] = f"mov eax, 0x{not_imm:08x}"
+                            cleaned_lines[body_index] = f"mov edi, {imm}"
                             line_origins[body_index] = "auto"
-                            cleaned_lines.insert(body_index + 1, "not eax")
+                            cleaned_lines.insert(body_index + 1, "push rdi")
                             line_origins.insert(body_index + 1, "auto")
-                            cleaned_lines.insert(body_index + 2, "push eax")
-                            line_origins.insert(body_index + 2, "auto")
+                            original_line_nums.insert(body_index + 1, None)
                         except ValueError:
                             pass
                     elif source.startswith("sub esp, 0x") and len(source.split()) == 3:
@@ -218,66 +258,93 @@ def nasm_asm(
                 with open(listing_path, "r") as f:
                     listing_lines = f.readlines()
 
-            # Build origin map for the *current* asm source (line numbers in listing are 1-based).
-            # Line 1 is BITS; remaining lines correspond to cleaned_lines.
-            asm_line_origins = ["directive"] + list(line_origins)
+            if debug:
+                # Build origin map for the *current* asm source (line numbers in listing are 1-based).
+                # Line 1 is BITS; remaining lines correspond to cleaned_lines.
+                asm_line_origins = ["directive"] + list(line_origins)
 
-            # Print the NASM listing output in debug mode
-            print(f"\t{Fore.BLUE}o Generated NASM output:{Style.RESET_ALL}")
-            if "auto" in asm_line_origins:
-                print(
-                    f"\t{Fore.RED}[i] Auto-injected/rewritten lines highlighted{Style.RESET_ALL}"
-                )
-            for i, line in enumerate(listing_lines, 1):
-                line = line.rstrip()
-                if line.strip():
-                    parts = line.strip().split()
-                    if len(parts) >= 3:
-                        # Check if parts[1] is a hex address
-                        if all(c in '0123456789abcdefABCDEF' for c in parts[1]):
-                            parsed = _parse_listing_line(line)
-                            if parsed is None:
-                                address = parts[1]
-                                opcode = parts[2]
-                                source = ' '.join(parts[3:]) if len(parts) > 3 else ''
-                                src_line_no = None
+                # Print the NASM listing output in debug mode
+                print(f"\t{Fore.BLUE}o Generated NASM output:{Style.RESET_ALL}")
+                if "auto" in asm_line_origins:
+                    print(
+                        f"\t{Fore.RED}[i] Auto-injected/rewritten lines highlighted{Style.RESET_ALL}"
+                    )
+                user_line_num = 1
+                for i, line in enumerate(listing_lines, 1):
+                    line = line.rstrip()
+                    if line.strip():
+                        parts = line.strip().split()
+                        if len(parts) >= 3:
+                            # Check if parts[1] is a hex address
+                            if all(c in "0123456789abcdefABCDEF" for c in parts[1]):
+                                parsed = _parse_listing_line(line)
+                                if parsed is None:
+                                    address = parts[1]
+                                    opcode = parts[2]
+                                    source = (
+                                        " ".join(parts[3:]) if len(parts) > 3 else ""
+                                    )
+                                    src_line_no = None
+                                else:
+                                    src_line_no, address, opcode, source = parsed
+                                cleaned_line = f"{address}    {opcode:<16} {source}"
+                                if _opcode_has_null_byte(opcode):
+                                    plain_padded = opcode.ljust(16)
+                                    colored_padded = plain_padded.replace(
+                                        "00", f"{Fore.RED}00{Fore.GREEN}"
+                                    )
+                                    cleaned_line = (
+                                        f"{address}    {colored_padded} {source}"
+                                    )
+                                    color = f"{Back.WHITE}{Fore.GREEN}"
+                                else:
+                                    if (
+                                        src_line_no is not None
+                                        and 1 <= src_line_no <= len(asm_line_origins)
+                                        and asm_line_origins[src_line_no - 1] == "auto"
+                                    ):
+                                        color = Fore.RED
+                                    else:
+                                        color = Fore.CYAN
                             else:
-                                src_line_no, address, opcode, source = parsed
-                            cleaned_line = f"{address}  {opcode:<12} {source}"
-                            if _opcode_has_null_byte(opcode):
-                                color = f"{Fore.RED}{Back.YELLOW}"
-                            else:
-                                if (
-                                    src_line_no is not None
-                                    and 1 <= src_line_no <= len(asm_line_origins)
-                                    and asm_line_origins[src_line_no - 1] == "auto"
-                                ):
-                                    color = Fore.RED
+                                cleaned_line = " ".join(parts[1:])
+                                if ":" in cleaned_line:
+                                    color = Fore.MAGENTA
+                                    cleaned_line = "\t " + cleaned_line
                                 else:
                                     color = Fore.CYAN
                         else:
-                            cleaned_line = ' '.join(parts[1:])
+                            cleaned_line = " ".join(parts[1:]) if parts else line
                             if ":" in cleaned_line:
                                 color = Fore.MAGENTA
-                                cleaned_line = '\t\t  ' + cleaned_line
+                                cleaned_line = "\t " + cleaned_line
                             else:
                                 color = Fore.CYAN
                     else:
-                        cleaned_line = ' '.join(parts[1:]) if parts else line
-                        if ":" in cleaned_line:
-                            color = Fore.MAGENTA
-                            cleaned_line = '\t\t  ' + cleaned_line
-                        else:
-                            color = Fore.CYAN
-                else:
-                    cleaned_line = line
-                    color = Fore.CYAN
+                        cleaned_line = line
+                        color = Fore.CYAN
 
-                # Skip BITS directives
-                if cleaned_line.strip().startswith("BITS"):
-                    continue
-                print(f"\t    {Fore.GREEN}{i:2d}: {color}{cleaned_line}{Style.RESET_ALL}")
-            print()
+                    # Skip BITS directives
+                    if cleaned_line.strip().startswith("BITS"):
+                        continue
+
+                    # Determine line number to display
+                    is_auto = False
+                    if (
+                        parsed is not None
+                        and src_line_no is not None
+                        and src_line_no > 1
+                    ):
+                        body_index = src_line_no - 2
+                        if 0 <= body_index < len(line_origins):
+                            is_auto = line_origins[body_index] == "auto"
+                    line_num_str = f"{user_line_num:03d}"
+                    user_line_num += 1
+
+                    print(
+                        f"\t    {Fore.GREEN}{line_num_str}: {color}{cleaned_line}{Style.RESET_ALL}"
+                    )
+                print()
 
         # Read the generated binary shellcode
         with open(bin_path, "rb") as f:
@@ -303,7 +370,7 @@ def nasm_asm(
     # Warn if interior null bytes are present
     if b"\x00" in shellcode:
         print(
-            f"{Back.WHITE}{Fore.RED}[!] Warning: Interior null byte(s) detected in shellcode!{Style.RESET_ALL}"
+            f"{Back.WHITE}{Fore.RED}[!] Warning: Interior null byte(s) detected in shellcode! Enable debug mode to see highlighted lines.{Style.RESET_ALL}"
         )
 
     return shellcode
