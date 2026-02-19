@@ -42,6 +42,7 @@ def nasm_asm(
     mov_reg = push_reg
 
     # Normalize input to a list of lines
+    # If CODE is a string, split it into source lines.
     if isinstance(CODE, str):
         lines = CODE.splitlines()
     else:
@@ -53,18 +54,22 @@ def nasm_asm(
     line_origins: List[str] = []  # 'user' | 'auto'
     for raw_line in lines:
         line = raw_line.strip()
+        # Skip blank lines early.
         if not line:  # skip empty lines
             continue
 
         # Remove comments (both ; and # style)
         comment_pos = line.find(";")
+        # Strip semicolon comments when present.
         if comment_pos != -1:
             line = line[:comment_pos]
         comment_pos = line.find("#")
+        # Strip hash comments when present.
         if comment_pos != -1:
             line = line[:comment_pos]
 
         line = line.strip()
+        # Keep only non-empty lines after comment removal.
         if line:  # only add non-empty lines after cleaning
             cleaned_lines.append(line)
             line_origins.append("user")
@@ -73,6 +78,7 @@ def nasm_asm(
     original_line_nums = []
     user_line_counter = 1
     for origin in line_origins:
+        # Assign sequential user-facing line numbers.
         if origin == "user":
             original_line_nums.append(user_line_counter)
             user_line_counter += 1
@@ -82,6 +88,7 @@ def nasm_asm(
     # Process labels: number them sequentially in order of appearance
     labels = []
     for line in cleaned_lines:
+        # Capture label definitions to support deterministic renaming.
         if line.endswith(":"):
             label = line[:-1].strip()
             labels.append(label)
@@ -169,11 +176,14 @@ def nasm_asm(
             Returns (src_line_no, address, bytes, source) or None.
             """
             parts = raw.strip().split()
+            # Ignore lines too short to contain NASM listing fields.
             if len(parts) < 3:
                 return None
+            # Ignore lines that don't begin with a source line number.
             if not parts[0].isdigit():
                 return None
             # parts[1] is address in hex for typical NASM listings
+            # Ignore lines that don't have a hex address field.
             if not all(c in "0123456789abcdefABCDEF" for c in parts[1]):
                 return None
             src_line_no = int(parts[0])
@@ -206,6 +216,7 @@ def nasm_asm(
             full_len = len(cleaned) - (len(cleaned) % 2)
             for i in range(0, full_len, 2):
                 byte = cleaned[i : i + 2].lower()
+                # Flag true null bytes only.
                 if byte == "00":
                     return True
             return False
@@ -219,6 +230,7 @@ def nasm_asm(
         def _format_opcode_for_display(opcode_hex: str, split_mode: str) -> str:
             """Format opcode for display according to requested grouping."""
             pairs = _opcode_to_byte_pairs(opcode_hex)
+            # Fall back to raw text if no full byte pairs exist.
             if not pairs:
                 return opcode_hex
 
@@ -229,6 +241,7 @@ def nasm_asm(
                 "dq": 8,
             }.get(split_mode)
 
+            # Joined mode: return contiguous hex.
             if group_bytes is None:
                 return "".join(pairs)
 
@@ -240,11 +253,13 @@ def nasm_asm(
         def _format_opcode_with_null_highlight(opcode_hex: str, split_mode: str) -> str:
             """Format opcode and highlight exact 00 bytes in display output."""
             pairs = _opcode_to_byte_pairs(opcode_hex)
+            # Fall back to raw text if no full byte pairs exist.
             if not pairs:
                 return opcode_hex
 
             highlighted_pairs = []
             for pair in pairs:
+                # Highlight exact null-byte tokens.
                 if pair == "00":
                     highlighted_pairs.append(
                         f"{Fore.WHITE}{Back.RED}00{Style.RESET_ALL}{Fore.CYAN}"
@@ -259,6 +274,7 @@ def nasm_asm(
                 "dq": 8,
             }.get(split_mode)
 
+            # Joined mode: return contiguous highlighted hex.
             if group_bytes is None:
                 return "".join(highlighted_pairs)
 
@@ -269,10 +285,12 @@ def nasm_asm(
 
         # Check for warnings and fix them
         has_warnings = "warning" in result.stderr.decode("utf-8", errors="replace")
+        # Apply warning-driven rewrites only when injection is enabled.
         if inject_fixes and has_warnings:
             # Apply push fixes for warnings
             for i in range(len(cleaned_lines) - 1, -1, -1):  # reverse to handle inserts
                 line = cleaned_lines[i].strip()
+                # Rewrite direct push-immediate patterns.
                 if line.startswith("push 0x") and len(line.split()) == 2:
                     imm = line.split()[1]
                     try:
@@ -297,21 +315,26 @@ def nasm_asm(
             (parsed is not None and _opcode_has_null_byte(parsed[2]))
             for parsed in (_parse_listing_line(ln) for ln in listing_lines)
         )
+        # Apply null-byte rewrites only when injection is enabled.
         if inject_fixes and has_null:
             fixes = []  # (body_index, source_text)
             for raw in listing_lines:
                 parsed = _parse_listing_line(raw)
+                # Skip listing rows that don't parse as code entries.
                 if parsed is None:
                     continue
                 src_line_no, _addr, opcode_bytes, source = parsed
+                # Keep only entries whose opcode bytes contain a null byte.
                 if not _opcode_has_null_byte(opcode_bytes):
                     continue
                 body_index = src_line_no - 2
+                # Keep only rows mapped to current source body lines.
                 if 0 <= body_index < len(cleaned_lines):
                     fixes.append((body_index, source))
 
             seen = set()
             for body_index, source in sorted(fixes, key=lambda x: x[0], reverse=True):
+                # Prevent duplicate rewrites on the same source line.
                 if body_index in seen:
                     continue
                 seen.add(body_index)
@@ -319,9 +342,11 @@ def nasm_asm(
                 def _norm(s: str) -> str:
                     return re.sub(r"\s+", " ", s.strip())
 
+                # Ensure listing source still matches current source text.
                 if _norm(cleaned_lines[body_index]) != _norm(source):
                     continue
 
+                # Rewrite push-immediate instructions to avoid problematic bytes.
                 if source.startswith("push 0x") and len(source.split()) == 2:
                     imm = source.split()[1]
                     try:
@@ -333,6 +358,7 @@ def nasm_asm(
                         original_line_nums.insert(body_index + 1, None)
                     except ValueError:
                         pass
+                # Rewrite sub esp immediate by using equivalent add with negated immediate.
                 elif source.startswith("sub esp, 0x") and len(source.split()) == 3:
                     imm = source.split()[2]
                     try:
@@ -342,6 +368,7 @@ def nasm_asm(
                         line_origins[body_index] = "auto"
                     except ValueError:
                         pass
+                # Rewrite add esp immediate by using equivalent sub with negated immediate.
                 elif source.startswith("add esp, 0x") and len(source.split()) == 3:
                     imm = source.split()[2]
                     try:
@@ -358,6 +385,7 @@ def nasm_asm(
             _run_nasm()
             listing_lines = _read_listing_lines()
 
+        # Emit detailed listing output only when print mode is enabled.
         if print:
             # Build origin map for the *current* asm source (line numbers in listing are 1-based).
             # Line 1 is BITS; remaining lines correspond to cleaned_lines.
@@ -365,6 +393,7 @@ def nasm_asm(
             opcode_col_width = 23
             for preview_line in listing_lines:
                 preview_parsed = _parse_listing_line(preview_line)
+                # Skip non-instruction listing lines when sizing the opcode column.
                 if preview_parsed is None:
                     continue
                 _src_line_no, _address, preview_opcode, _source = preview_parsed
@@ -373,6 +402,7 @@ def nasm_asm(
 
             # Print the NASM listing output in debug mode
             builtins.print(f"\t{Fore.BLUE}o Generated NASM output:{Style.RESET_ALL}")
+            # Announce when auto-injected lines are present in output.
             if "auto" in asm_line_origins:
                 builtins.print(
                     f"\t{Fore.RED}[i] Auto-injected/rewritten lines highlighted{Style.RESET_ALL}"
@@ -382,12 +412,16 @@ def nasm_asm(
                 line = line.rstrip()
                 parsed = None
                 src_line_no = None
+                # Process populated listing lines.
                 if line.strip():
                     parts = line.strip().split()
+                    # Process lines that can contain address/opcode/source fields.
                     if len(parts) >= 3:
                         # Check if parts[1] is a hex address
+                        # Parse instruction-like listing rows with a valid hex address.
                         if all(c in "0123456789abcdefABCDEF" for c in parts[1]):
                             parsed = _parse_listing_line(line)
+                            # Use fallback extraction when structured parsing fails.
                             if parsed is None:
                                 address = parts[1]
                                 opcode = parts[2]
@@ -403,6 +437,7 @@ def nasm_asm(
                             cleaned_line = (
                                 f"{address}    {opcode_display}{opcode_padding}{source}"
                             )
+                            # Highlight opcode column when null bytes are present.
                             if _opcode_has_null_byte(opcode):
                                 colored_display = _format_opcode_with_null_highlight(
                                     opcode, hex_split
@@ -410,6 +445,7 @@ def nasm_asm(
                                 cleaned_line = f"{address}    {colored_display}{opcode_padding}{source}"
                                 color = Fore.CYAN
                             else:
+                                # Color auto-injected instruction rows differently.
                                 if (
                                     src_line_no is not None
                                     and 1 <= src_line_no <= len(asm_line_origins)
@@ -420,6 +456,7 @@ def nasm_asm(
                                     color = Fore.CYAN
                         else:
                             cleaned_line = " ".join(parts[1:])
+                            # Color label-style rows distinctly.
                             if ":" in cleaned_line:
                                 color = Fore.MAGENTA
                                 cleaned_line = "\t " + cleaned_line
@@ -427,6 +464,7 @@ def nasm_asm(
                                 color = Fore.CYAN
                     else:
                         cleaned_line = " ".join(parts[1:]) if parts else line
+                        # Color short label-like rows distinctly.
                         if ":" in cleaned_line:
                             color = Fore.MAGENTA
                             cleaned_line = "\t " + cleaned_line
@@ -437,6 +475,7 @@ def nasm_asm(
                     color = Fore.CYAN
 
                 # Skip BITS directives
+                # Omit assembler directive rows from user-facing listing output.
                 if cleaned_line.strip().startswith("BITS"):
                     continue
 
@@ -456,8 +495,10 @@ def nasm_asm(
     assembly_code = assembly_code.rstrip(b"\x00")  # strip trailing nulls only
 
     # Debug output for stripped bytes and assembly_code
+    # Emit summary output only when print mode is enabled.
     if print:
         stripped_count = original_len - len(assembly_code)
+        # Report how many trailing null bytes were removed.
         if stripped_count:
             builtins.print(
                 f"\t{Fore.YELLOW}[i] Stripped {stripped_count} trailing null byte(s){Style.RESET_ALL}"
@@ -469,6 +510,7 @@ def nasm_asm(
         )
 
     # Warn if interior null bytes are present
+    # Warn when null bytes still exist inside the payload body.
     if b"\x00" in assembly_code:
         builtins.print(
             f"{Back.WHITE}{Fore.RED}[!] Warning: Interior null byte(s) detected in assembly_code! Enable print mode to see highlighted lines.{Style.RESET_ALL}"
