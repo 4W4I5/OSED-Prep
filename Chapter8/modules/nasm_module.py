@@ -5,7 +5,7 @@ import subprocess
 import tempfile
 
 from colorama import Back, Fore, Style
-from typing_extensions import List, Literal, Union
+from typing_extensions import List, Literal, Optional, Union
 
 
 def nasm_asm(
@@ -14,6 +14,9 @@ def nasm_asm(
     print: bool = False,
     inject_fixes: bool = True,
     hex_split: Literal["joined", "db", "dw", "dd", "dq"] = "joined",
+    build_exe: bool = False,
+    exe_path: Optional[str] = None,
+    linker: Optional[str] = None,
 ) -> bytes:
     """
     Assemble x86/x64 ASM using NASM and return raw assembly_code bytes.
@@ -35,6 +38,16 @@ def nasm_asm(
         - dw: word groups (4 hex chars)
         - dd: dword groups (8 hex chars)
         - dq: qword groups (16 hex chars)
+
+    build_exe enables/disables emitting a Windows PE executable (.exe) that calls the assembled
+    code from a minimal `main` entrypoint. When enabled, a C toolchain linker is required
+    (e.g. MinGW-w64 `gcc`/`clang`).
+
+    exe_path optionally overrides where the executable is written. If omitted and build_exe is True,
+    defaults to `nasm_payload_<arch>.exe` in the current working directory.
+
+    linker optionally forces the linker command (e.g. `x86_64-w64-mingw32-gcc`). If omitted,
+    common candidates are auto-detected.
     """
     # Set the BITS directive based on architecture
     bits_directive = f"BITS {arch}"
@@ -489,6 +502,132 @@ def nasm_asm(
 
         # Read the generated binary assembly_code
         assembly_code = _read_binary_output()
+
+        def _try_run_version(cmd: str) -> bool:
+            try:
+                subprocess.run(
+                    [cmd, "--version"],
+                    check=True,
+                    capture_output=True,
+                )
+                return True
+            except Exception:
+                return False
+
+        def _pick_linker(arch_bits: int) -> str:
+            if linker:
+                return linker
+
+            # Prefer explicit MinGW-w64 triplet compilers when available.
+            candidates: List[str]
+            if arch_bits == 64:
+                candidates = [
+                    "x86_64-w64-mingw32-gcc",
+                    "clang",
+                    "gcc",
+                ]
+            else:
+                candidates = [
+                    "i686-w64-mingw32-gcc",
+                    "clang",
+                    "gcc",
+                ]
+
+            for cmd in candidates:
+                if _try_run_version(cmd):
+                    return cmd
+
+            raise RuntimeError(
+                f"{Back.WHITE}{Fore.RED}No suitable linker toolchain found to build an .exe.\n"
+                f"Install MinGW-w64 (gcc) or clang, or pass linker=...{Style.RESET_ALL}"
+            )
+
+        def _build_exe_from_payload(payload_lines: List[str]) -> str:
+            """Build a minimal .exe that calls `payload` and returns 0.
+
+            This is intended for quick debugging/running code, not for position-independent shellcode.
+            """
+            exe_out = exe_path
+            if not exe_out:
+                exe_out = os.path.join(os.getcwd(), f"nasm_payload_{arch}.exe")
+            if not exe_out.lower().endswith(".exe"):
+                exe_out += ".exe"
+
+            obj_fmt = "win64" if arch == 64 else "win32"
+            exe_asm_path = os.path.join(tmpdir, "exe.asm")
+            obj_path = os.path.join(tmpdir, "exe.obj")
+
+            # Wrap user code in a callable label; add a `ret` to allow returning to `main`.
+            wrapper: List[str] = [
+                f"BITS {arch}",
+                "global main",
+                "section .text",
+                "main:",
+                "    call payload",
+                "    xor eax, eax",
+                "    ret",
+                "payload:",
+            ]
+
+            for ln in payload_lines:
+                # Keep labels and directives unindented; indent instructions for readability only.
+                if ln.endswith(":") or ln.lower().startswith("section "):
+                    wrapper.append(ln)
+                else:
+                    wrapper.append(f"    {ln}")
+            wrapper.append("    ret")
+
+            try:
+                with open(exe_asm_path, "w") as f:
+                    f.write("\n".join(wrapper))
+            except OSError as e:
+                raise RuntimeError(
+                    f"{Back.WHITE}{Fore.RED}Failed to write EXE NASM source file:\n{e}{Style.RESET_ALL}"
+                )
+
+            try:
+                subprocess.run(
+                    ["nasm", "-f", obj_fmt, exe_asm_path, "-o", obj_path],
+                    check=True,
+                    capture_output=True,
+                )
+            except FileNotFoundError:
+                raise RuntimeError(
+                    f"{Back.WHITE}{Fore.RED}NASM executable not found. Ensure 'nasm' is installed and in PATH.{Style.RESET_ALL}"
+                )
+            except subprocess.CalledProcessError as e:
+                raise RuntimeError(
+                    f"{Back.WHITE}{Fore.RED}NASM EXE assembly failed:\n{e.stderr.decode('utf-8', errors='replace')}{Style.RESET_ALL}"
+                )
+
+            cc = _pick_linker(arch)
+            link_cmd: List[str] = [cc]
+            # Try to enforce target bitness when using generic gcc/clang.
+            if cc in {"gcc", "clang"}:
+                link_cmd.append("-m64" if arch == 64 else "-m32")
+            link_cmd.extend([obj_path, "-o", exe_out])
+
+            try:
+                subprocess.run(
+                    link_cmd,
+                    check=True,
+                    capture_output=True,
+                )
+            except subprocess.CalledProcessError as e:
+                stderr = e.stderr.decode("utf-8", errors="replace")
+                raise RuntimeError(
+                    f"{Back.WHITE}{Fore.RED}Linking EXE failed using '{cc}'.\n{stderr}{Style.RESET_ALL}"
+                )
+
+            return exe_out
+
+        # Optionally build an .exe in addition to returning raw shellcode bytes.
+        if build_exe:
+            exe_out = _build_exe_from_payload(cleaned_lines)
+            if print:
+                builtins.print(
+                    f"\t{Fore.GREEN}[=] Wrote executable: {Fore.YELLOW}{exe_out}{Style.RESET_ALL}"
+                )
 
     # Strip trailing null bytes from the assembly_code
     original_len = len(assembly_code)
