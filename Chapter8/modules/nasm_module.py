@@ -160,19 +160,27 @@ def nasm_asm(
                     return None
                 src_line_no = int(parts[0])
                 address = parts[1]
-                opcode_bytes = parts[2]
-                source = " ".join(parts[3:]) if len(parts) > 3 else ""
+                # Collect all consecutive hex parts for opcode_bytes
+                i = 2
+                opcode_bytes = ""
+                while i < len(parts) and re.match(r"^[0-9a-fA-F]+$", parts[i]):
+                    opcode_bytes += parts[i]
+                    i += 1
+                source = " ".join(parts[i:]) if i < len(parts) else ""
                 return src_line_no, address, opcode_bytes, source
 
             def _opcode_has_null_byte(opcode_hex: str) -> bool:
-                """Return True if opcode hex string contains a literal 0x00 byte.
+                """Return True if opcode hex string contains a literal 0x00 byte, excluding the last byte.
 
                 Important: don't use substring matching ('00' in opcode_hex) because
                 it can false-positive across byte boundaries (e.g. 'C002').
                 """
                 opcode_hex = re.sub(r"[^0-9a-fA-F]", "", opcode_hex or "")
-                for j in range(0, len(opcode_hex) - 1, 2):
-                    if opcode_hex[j : j + 2].lower() == "00":
+                for j in range(0, len(opcode_hex) - 2, 2):
+                    if (
+                        j + 1 < len(opcode_hex)
+                        and opcode_hex[j : j + 2].lower() == "00"
+                    ):
                         return True
                 return False
 
@@ -291,7 +299,8 @@ def nasm_asm(
                                 if _opcode_has_null_byte(opcode):
                                     plain_padded = opcode.ljust(16)
                                     colored_padded = plain_padded.replace(
-                                        "00", f"{Fore.RED}00{Fore.GREEN}"
+                                        "00",
+                                        f"{Fore.WHITE}{Back.RED}00{Back.WHITE}{Fore.GREEN}",
                                     )
                                     cleaned_line = (
                                         f"{address}    {colored_padded} {source}"
