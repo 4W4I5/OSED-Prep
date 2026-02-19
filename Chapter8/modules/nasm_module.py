@@ -205,10 +205,18 @@ def nasm_asm(
             # Normalize into full 2-hex-character byte chunks only.
             i = 2
             opcode_tokens: List[str] = []
-            while i < len(parts) and re.match(r"^[0-9a-fA-F]+$", parts[i]):
+            # NASM emits opcode bytes as even-length hex tokens (00, 4883c160, ...).
+            # Require an even-length token so instructions like "add" don't get misparsed
+            # as opcode bytes (since "add" is hex letters but not a byte sequence).
+            while (
+                i < len(parts)
+                and re.match(r"^[0-9a-fA-F]+$", parts[i])
+                and (len(parts[i]) % 2 == 0)
+                and (len(parts[i]) >= 2)
+            ):
                 token = parts[i]
                 # Keep only complete byte pairs from each token.
-                for j in range(0, len(token) - 1, 2):
+                for j in range(0, len(token), 2):
                     opcode_tokens.append(token[j : j + 2])
                 i += 1
             opcode_bytes = "".join(opcode_tokens)
