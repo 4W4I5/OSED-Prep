@@ -37,7 +37,7 @@ def hexPort(portNumber, byteorder: str = "big"):
     immediates), we always interpret the desired bytes as little-endian.
     """
     if not isinstance(portNumber, int) or not (0 <= portNumber <= 65535):
-        raise ValueError(f"Invalid port: {portNumber}")
+        raise ValueError(f"Invalid port: {portNumber}. Ensure type is int")
 
     port_bytes = portNumber.to_bytes(2, byteorder="big")
     if byteorder == "little":
