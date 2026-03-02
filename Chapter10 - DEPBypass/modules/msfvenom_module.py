@@ -7,7 +7,7 @@ import hashlib
 import pickle
 from pathlib import Path
 
-MSFVENOM_PATH = "/usr/bin/msfvenom"
+MSFVENOM_PATH = "msfvenom"
 
 # Persistent cache directory (you can change this path if needed)
 CACHE_DIR = Path(os.path.expanduser("./msfvenom_cache"))
@@ -50,8 +50,10 @@ def generatePayload(
     debug: bool = False,
 ) -> bytes:
     """Python wrapper for msfvenom with persistent disk caching."""
+    bad_chars_hex = ','.join(f'{ord(c):02x}' for c in bad_chars) if bad_chars else ""
+    
     key = _generate_cache_key(
-        payload, LHOST, LPORT, encoder, iterations, bad_chars, arch, platform
+        payload, LHOST, LPORT, encoder, iterations, bad_chars_hex, arch, platform
     )
     cache_file = _cache_path(key)
 
@@ -89,8 +91,8 @@ def generatePayload(
     cmd += ["-a", arch, "--platform", platform]
     if encoder:
         cmd += ["-e", encoder, "-i", str(iterations)]
-    if bad_chars:
-        cmd += ["-b", bad_chars]
+    if bad_chars_hex:
+        cmd += ["-b", bad_chars_hex]
     if LHOST:
         cmd.append(f"LHOST={LHOST}")
     if LPORT:
