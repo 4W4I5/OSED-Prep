@@ -70,6 +70,21 @@ results in the psCommandBuffer
 getIPAddr&Port -> gets existing TCP conn to send info back to
                   switched existing connection type to recieve buffer
 
+01b30000 01b5b000   
+gsk8iccs C:\Program Files\ibm\gsk8\lib\gsk8iccs.dll
+
+01b60000 01b9a000   
+icclib019 C:\Program Files\ibm\gsk8\lib\N\icc\icclib\icclib019.dll
+
+02f80000 03070000   
+libeay32IBM019 C:\Program Files\ibm\gsk8\lib\N\icc\osslib\libeay32IBM019.dll
+
+Using IBM DLLs, we can ensure that our exploit is at least only tivoli 
+version dependent, and not dependent on windows versions
+
+Rule of Thumb (RoT) for choosing modules is to ensure the upper bytes are 
+not 00, all 3 are fine here, ill use libeay32IBM019 as its the highest out
+of the 3 modules
 =============================================================================
 
 
