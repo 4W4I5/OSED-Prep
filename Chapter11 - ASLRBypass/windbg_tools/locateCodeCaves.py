@@ -94,6 +94,14 @@ def isPageReadWrite(address):
         protect = 0x1
     return protect in MEM_ACCESS_RW.keys()
 
+def has_null_bytes(value):
+    """
+    Check if the value has null bytes in its byte representation (32-bit).
+    @param value: int value
+    @return: Bool
+    """
+    return (value & 0xFF) == 0 or ((value >> 8) & 0xFF) == 0 or ((value >> 16) & 0xFF) == 0 or ((value >> 24) & 0xFF) == 0
+
 def findCodeCaves(va, size, min_length):
     """
     Find code caves (consecutive null bytes) in the given range.
@@ -152,9 +160,10 @@ if __name__ == "__main__":
     caves = findCodeCaves(va, size, min_length)
     usable_caves = []
     for start, length in caves:
-        if isPageReadWrite(start):
+        if isPageReadWrite(start) and not has_null_bytes(start):
             offset = start - mod.begin()
-            usable_caves.append((offset, length))
+            if not has_null_bytes(offset):
+                usable_caves.append((offset, length))
 
     if usable_caves:
         for offset, length in usable_caves:
