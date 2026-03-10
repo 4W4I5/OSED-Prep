@@ -2,9 +2,10 @@
 Pykd Code Cave Locator Tool
 """
 
-from pykd import *
 import sys
 import time
+
+from pykd import *
 
 HEADER = "#" * 80 + "\r\n"
 HEADER += "# locateCodeCaves.py - pykd module for Code Cave Discovery\r\n"
@@ -53,6 +54,7 @@ MEM_ACCESS_EXE = {
 
 PAGE_SIZE = 0x1000
 
+
 def log(msg):
     """
     Log a message to console.
@@ -60,6 +62,7 @@ def log(msg):
     @return: None
     """
     print("[+] " + msg)
+
 
 def getModule(base_addr):
     """
@@ -69,6 +72,7 @@ def getModule(base_addr):
     """
     return module(base_addr)
 
+
 def getCodeSection(mod):
     """
     Get the code section (.text) of the module.
@@ -76,11 +80,12 @@ def getCodeSection(mod):
     @return: (va, size) or (None, None)
     """
     pe_info = getPEInfo(mod.name())
-    sections = pe_info['sections']
+    sections = pe_info["sections"]
     for sec in sections:
-        if sec['name'].lower() == '.text':
-            return sec['va'], sec['size']
+        if sec["name"].lower() == ".text":
+            return sec["va"], sec["size"]
     return None, None
+
 
 def isPageReadWrite(address):
     """
@@ -94,6 +99,7 @@ def isPageReadWrite(address):
         protect = 0x1
     return protect in MEM_ACCESS_RW.keys()
 
+
 def has_null_bytes(value):
     """
     Check if the value has null bytes in its byte representation (32-bit).
@@ -101,6 +107,7 @@ def has_null_bytes(value):
     @return: Bool
     """
     return (value & 0xFF) == 0 or ((value >> 8) & 0xFF) == 0 or ((value >> 16) & 0xFF) == 0 or ((value >> 24) & 0xFF) == 0
+
 
 def findCodeCaves(va, size, min_length):
     """
@@ -124,6 +131,7 @@ def findCodeCaves(va, size, min_length):
         else:
             ptr += 1
     return caves
+
 
 if __name__ == "__main__":
     print("#" * 63)
