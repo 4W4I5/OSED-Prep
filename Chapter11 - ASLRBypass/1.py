@@ -138,18 +138,18 @@ note: this is very confusing to follow while working with brain fog
 
 lib: libeay32ibm019
 offset1: 0x3c                                 <- gets us to PE header
-offset2: 0x2c + offset1                       <- offset of code section 
+offset2: 0x2c + offset1                       <- offset of code section
 CS->libeay32ibm019: baseAddress + offset1     <- Code Section
 then
 
 libeay32ibm019 baseAddress + offset2 gets us to the code section
 
-then 
+then
 
 we use the END_ADDRESS of the code section
     - take away 0x400 bytes to make space for our code
 
-now 
+now
 
 to get the offset for this, we
     - END_ADDRESS - baseAddress - 0x400 (This gives offset from baseAddress to the code cave)
@@ -158,6 +158,22 @@ ENSURE: offset does not have any null bytes
 
 
 just realized, this is needless. can use pykd to automate locating code caves
+wrote locateCodeCaves.py, stored in /windbg_tools
+
+
+after code caves we can abuse WPM to copy our shellcode from the overflown opCode
+buffer to an executable page in memory
+
+WPM takes
+- hProcess 			<- Set to -1, stay within currentProc
+- lpBaseAddress			<- Addr to write to (BaseAddr + Offset)
+- lpBuffer			<- Shellcode stack Addr
+- nSize				<- Shellcode Size
+- lpNumberOfBytesWritten	<- DWORD in the .data section
+
+
+
+
 =============================================================================
 
 """
