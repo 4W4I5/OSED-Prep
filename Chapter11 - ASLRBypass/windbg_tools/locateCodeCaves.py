@@ -4,6 +4,7 @@ Pykd Code Cave Locator Tool
 
 import sys
 import time
+from operator import contains
 
 from pykd import *
 
@@ -55,13 +56,20 @@ MEM_ACCESS_EXE = {
 PAGE_SIZE = 0x1000
 
 
-def log(msg):
+def log(msg, type="info"):
     """
     Log a message to console.
     @param msg: Message string
     @return: None
     """
-    print("[+] " + msg)
+    if type == "info":
+        print("[>] " + msg)
+    elif type == "error":
+        print("[!!!] " + msg)
+    elif type == "success":
+        print("[+] " + msg)
+    elif type == "warn":
+        print("[!] " + msg)
 
 
 def getModule(base_addr):
@@ -79,25 +87,17 @@ def getCodeSection(mod):
     @param mod: module object
     @return: (va, size) or (None, None)
     """
-    pe_info = getPEInfo(mod.name())
-    sections = pe_info["sections"]
-    for sec in sections:
-        if sec["name"].lower() == ".text":
-            return sec["va"], sec["size"]
-    return None, None
-
-
-def isPageReadWrite(address):
-    """
-    Return True if a mem page is marked as read-write
-    @param address: address
-    @return: Bool
-    """
-    try:
-        protect = getVaProtect(address)
-    except:
-        protect = 0x1
-    return protect in MEM_ACCESS_RW.keys()
+    base_addr = mod.begin()
+    # dd baseAddress + 0x3c -> first dword is offset2
+    offset2 = ptrDWord(base_addr + 0x3C)
+    # dd baseAddress + 0x2c + offset2 -> offsetOfCodeSection
+    offsetOfCodeSection = ptrDWord(base_addr + 0x2C + offset2)
+    va = base_addr + offsetOfCodeSection
+    # Get size from SizeOfCode
+    size = ptrDWord(base_addr + 0x1C + offset2)
+    # Run !address on the code section
+    dprintln("!address " + hex(va))
+    return va, size
 
 
 def has_null_bytes(value):
@@ -109,30 +109,6 @@ def has_null_bytes(value):
     return (value & 0xFF) == 0 or ((value >> 8) & 0xFF) == 0 or ((value >> 16) & 0xFF) == 0 or ((value >> 24) & 0xFF) == 0
 
 
-def findCodeCaves(va, size, min_length):
-    """
-    Find code caves (consecutive null bytes) in the given range.
-    @param va: start address
-    @param size: size
-    @param min_length: minimum length
-    @return: list of (start, length)
-    """
-    caves = []
-    ptr = va
-    end = va + size
-    while ptr < end:
-        if loadSignBytes(ptr, 1)[0] == 0:
-            start = ptr
-            while ptr < end and loadSignBytes(ptr, 1)[0] == 0:
-                ptr += 1
-            length = ptr - start
-            if length >= min_length:
-                caves.append((start, length))
-        else:
-            ptr += 1
-    return caves
-
-
 if __name__ == "__main__":
     print("#" * 63)
     print("# locateCodeCaves.py pykd Code Cave Locator module #")
@@ -142,39 +118,42 @@ if __name__ == "__main__":
         base_addr_hex = sys.argv[1]
         base_addr = int(base_addr_hex, 16)
     except (IndexError, ValueError):
-        log("Syntax: locateCodeCaves.py base_address_hex [min_length]")
-        log("Example: locateCodeCaves.py 0x77400000 100")
+        log("Syntax: locateCodeCaves.py base_address_hex", type="error")
+        log("Example: locateCodeCaves.py 0x77400000", type="error")
         sys.exit()
-
-    min_length = 100
-    if len(sys.argv) > 2:
-        try:
-            min_length = int(sys.argv[2])
-        except ValueError:
-            log("min_length must be an integer")
-            sys.exit()
 
     mod = getModule(base_addr)
     if not mod:
-        log("Module not found at address 0x%x" % base_addr)
+        log("Module not found at address 0x%08x" % base_addr, type="error")
         sys.exit()
 
     va, size = getCodeSection(mod)
     if not va:
-        log("Code section not found")
+        log("Code section not found", type="error")
         sys.exit()
 
     log("Scanning code section for code caves...")
-    caves = findCodeCaves(va, size, min_length)
-    usable_caves = []
-    for start, length in caves:
-        if isPageReadWrite(start) and not has_null_bytes(start):
-            offset = start - mod.begin()
-            if not has_null_bytes(offset):
-                usable_caves.append((offset, length))
+    end_addr = va + size
+    log("Code section starts at 0x%08x and ends at 0x%08x" % (va, end_addr))
 
-    if usable_caves:
-        for offset, length in usable_caves:
-            log("Code cave at offset 0x%x, length %d bytes" % (offset, length))
-    else:
-        log("No usable code caves found with read-write permissions")
+    # Since we're at the end of the supposed cave, iterate backwards until we encounter a non
+    # null byte, and calculate the size of the cave. Report back on the offset of the cave
+    cave_size = 0
+    for addr in range(end_addr - 1, va - 1, -1):
+        if ptrByte(addr) == 0:
+            cave_size += 1
+            # after every 250 bytes report back on the cave size and offset
+            if cave_size % 250 == 0:
+                log(f"At address 0x{addr:08x}, found {cave_size} null bytes. Continuing...")
+        else:
+            if cave_size >= 400:
+                offset = addr + 1 - va
+                log("Found code cave at offset +%x | address 0x%08x with size %d bytes" % (offset, addr + 1, cave_size), type="success")
+            cave_size = 0
+
+    # Code to run after the loop ends
+    log("Finished scanning code section for code caves.")
+
+    # Null byte check for the last address checked
+    if ptrByte(end_addr - 1) == 0:
+        log("Null byte detected", type="warn")
