@@ -151,7 +151,7 @@ if __name__ == "__main__":
 
     # Get base address
     base_addr = mod.begin()
-    log("Image base address: 0x{:08x}".format(base_addr))
+    log("Current Image base address: 0x{:08x}".format(base_addr))
 
     # Get image path using !lmi command
     lmi_output = dbgCommand("!lmi " + mod.name())
@@ -182,10 +182,26 @@ if __name__ == "__main__":
     end = time.time()
     log("rp++ completed in %d secs." % int(end - start))
 
+    # Parse preferred base address from rp++ output
+    with open(output_file, "r") as f:
+        rp_lines = f.readlines()
+    preferred_base = None
+    for line in rp_lines:
+        if "ImageBase" in line:
+            try:
+                preferred_base = int(line.split(":")[1].strip(), 16)
+            except ValueError:
+                pass
+            break
+    if preferred_base is None:
+        log("Could not find preferred base address in rp++ output, using loaded base")
+        preferred_base = base_addr
+    else:
+        log("Preferred Image base address: 0x{:08x}".format(preferred_base))
+
     # Process the output file to add offsets and sort by usefulness
     try:
-        with open(output_file, "r") as f:
-            lines = f.readlines()
+        lines = rp_lines
         gadgets = []
         for line in lines:
             line = line.strip()
@@ -193,7 +209,7 @@ if __name__ == "__main__":
                 try:
                     addr_str, gadget = line.split(":", 1)
                     addr = int(addr_str, 16)
-                    offset = addr - base_addr
+                    offset = addr - preferred_base
                     new_line = "+0x{:08x} {}: {}".format(offset, addr_str, gadget.strip())
                     score = get_gadget_score(gadget.strip())
                     gadgets.append((score, offset, new_line))
