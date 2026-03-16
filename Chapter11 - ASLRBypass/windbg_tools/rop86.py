@@ -66,6 +66,10 @@ if __name__ == "__main__":
         log("Module not found")
         sys.exit()
 
+    # Get base address
+    base_addr = mod.begin()
+    log("Image base address: 0x{:08x}".format(base_addr))
+
     # Get image path using !lmi command
     lmi_output = dbgCommand("!lmi " + mod.name())
     image_path = None
@@ -84,7 +88,7 @@ if __name__ == "__main__":
     start = time.time()
     try:
         with open(output_file, "w") as f:
-            subprocess.run([exe_path, "-f", image_path, "-r", str(num_gadgets), "--unique"], stdout=f, check=True)
+            subprocess.run([exe_path, "-f", image_path, "-r", str(num_gadgets), "--unique", "-i", "2"], stdout=f, check=True)
     except subprocess.CalledProcessError as e:
         log("Error running rp++: " + str(e))
         sys.exit()
@@ -94,6 +98,25 @@ if __name__ == "__main__":
 
     end = time.time()
     log("rp++ completed in %d secs." % int(end - start))
+
+    # Process the output file to add offsets
+    try:
+        with open(output_file, "r") as f:
+            lines = f.readlines()
+        with open(output_file, "w") as f:
+            for line in lines:
+                line = line.strip()
+                if line.startswith("0x"):
+                    try:
+                        addr_str, gadget = line.split(":", 1)
+                        addr = int(addr_str, 16)
+                        offset = addr - base_addr
+                        line = "+0x{:08x} {}: {}".format(offset, addr_str, gadget.strip())
+                    except ValueError:
+                        pass  # If parsing fails, leave as is
+                f.write(line + "\n")
+    except FileNotFoundError:
+        log("Output file not created")
 
     # Read and print the output
     try:
