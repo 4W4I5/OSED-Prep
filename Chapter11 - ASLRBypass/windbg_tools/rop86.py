@@ -112,13 +112,22 @@ if __name__ == "__main__":
         log("Example: rop86.py ntdll 5 sort")
         sys.exit()
 
-    try:
-        num_gadgets = int(sys.argv[2])
-    except IndexError:
-        num_gadgets = 5
-    except ValueError:
-        log("num_gadgets must be an integer")
-        sys.exit()
+    num_gadgets = 5
+    sort_by_score = False
+
+    if len(sys.argv) > 2:
+        arg2 = sys.argv[2].strip()
+        if arg2.isdigit():
+            num_gadgets = int(arg2)
+            if len(sys.argv) > 3:
+                arg3 = sys.argv[3].strip()
+                if arg3.lower() == "sort":
+                    sort_by_score = True
+        elif arg2.lower() == "sort":
+            sort_by_score = True
+        else:
+            log("Invalid argument: " + arg2)
+            sys.exit()
 
     try:
         arg3 = sys.argv[3].strip()
@@ -187,20 +196,20 @@ if __name__ == "__main__":
                     offset = addr - base_addr
                     new_line = "+0x{:08x} {}: {}".format(offset, addr_str, gadget.strip())
                     score = get_gadget_score(gadget.strip())
-                    gadgets.append((score, new_line))
+                    gadgets.append((score, offset, new_line))
                 except ValueError:
-                    gadgets.append((0, line))  # Low score for unparseable lines
+                    gadgets.append((0, 0xFFFFFFFF, line))  # Low score for unparseable lines
             else:
-                gadgets.append((0, line))  # Headers or other non-gadget lines
+                gadgets.append((0, 0xFFFFFFFF, line))  # Headers or other non-gadget lines
 
         # Sort by score descending if requested, otherwise by offset ascending
         if sort_by_score:
             gadgets.sort(key=lambda x: x[0], reverse=True)
         else:
-            gadgets.sort(key=lambda x: int(x[1].split()[0][1:], 16))
+            gadgets.sort(key=lambda x: x[1])
 
         with open(output_file, "w") as f:
-            for score, line in gadgets:
+            for score, offset, line in gadgets:
                 f.write(line + "\n")
     except FileNotFoundError:
         log("Output file not created")
