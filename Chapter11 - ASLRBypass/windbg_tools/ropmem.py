@@ -1,5 +1,5 @@
 """
-Pykd Gadget Discovery Tool
+Memory Scanning ROP Gadget Discovery Tool
 """
 
 import sys
@@ -10,41 +10,6 @@ from pykd import *
 HEADER = "#" * 80 + "\r\n"
 HEADER += "# findrop.py - pykd module for Gadget Discovery\r\n"
 HEADER += "#" * 80 + "\r\n\r\n"
-
-# MEM_ACCESS = {
-# 0x1   : "PAGE_NOACCESS"                                                    ,
-# 0x2   : "PAGE_READONLY"                                                    ,
-# 0x4   : "PAGE_READWRITE"                                                   ,
-# 0x8   : "PAGE_WRITECOPY"                                                   ,
-# 0x10  : "PAGE_EXECUTE"                                                     ,
-# 0x20  : "PAGE_EXECUTE_READ"                                                ,
-# 0x40  : "PAGE_EXECUTE_READWRITE"                                           ,
-# 0x80  : "PAGE_EXECUTE_WRITECOPY"                                           ,
-# 0x101 : "PAGE_NOACCESS PAGE_GUARD"                                         ,
-# 0x102 : "PAGE_READONLY PAGE_GUARD "                                        ,
-# 0x104 : "PAGE_READWRITE PAGE_GUARD"                                        ,
-# 0x108 : "PAGE_WRITECOPY PAGE_GUARD"                                        ,
-# 0x110 : "PAGE_EXECUTE PAGE_GUARD"                                          ,
-# 0x120 : "PAGE_EXECUTE_READ PAGE_GUARD"                                     ,
-# 0x140 : "PAGE_EXECUTE_READWRITE PAGE_GUARD"                                ,
-# 0x180 : "PAGE_EXECUTE_WRITECOPY PAGE_GUARD"                                ,
-# 0x301 : "PAGE_NOACCESS PAGE_GUARD PAGE_NOCACHE"                            ,
-# 0x302 : "PAGE_READONLY PAGE_GUARD PAGE_NOCACHE"                            ,
-# 0x304 : "PAGE_READWRITE PAGE_GUARD PAGE_NOCACHE"                           ,
-# 0x308 : "PAGE_WRITECOPY PAGE_GUARD PAGE_NOCACHE"                           ,
-# 0x310 : "PAGE_EXECUTE PAGE_GUARD PAGE_NOCACHE"                             ,
-# 0x320 : "PAGE_EXECUTE_READ PAGE_GUARD PAGE_NOCACHE"                        ,
-# 0x340 : "PAGE_EXECUTE_READWRITE PAGE_GUARD PAGE_NOCACHE"                   ,
-# 0x380 : "PAGE_EXECUTE_WRITECOPY PAGE_GUARD PAGE_NOCACHE"                   ,
-# 0x701 : "PAGE_NOACCESS PAGE_GUARD PAGE_NOCACHE PAGE_WRITECOMBINE"          ,
-# 0x702 : "PAGE_READONLY PAGE_GUARD PAGE_NOCACHE PAGE_WRITECOMBINE"          ,
-# 0x704 : "PAGE_READWRITE PAGE_GUARD PAGE_NOCACHE PAGE_WRITECOMBINE"         ,
-# 0x708 : "PAGE_WRITECOPY PAGE_GUARD PAGE_NOCACHE PAGE_WRITECOMBINE"         ,
-# 0x710 : "PAGE_EXECUTE PAGE_GUARD PAGE_NOCACHE PAGE_WRITECOMBINE"           ,
-# 0x720 : "PAGE_EXECUTE_READ PAGE_GUARD PAGE_NOCACHE PAGE_WRITECOMBINE"      ,
-# 0x740 : "PAGE_EXECUTE_READWRITE PAGE_GUARD PAGE_NOCACHE PAGE_WRITECOMBINE" ,
-# 0x780 : "PAGE_EXECUTE_WRITECOPY PAGE_GUARD PAGE_NOCACHE PAGE_WRITECOMBINE" ,
-# }
 
 MEM_ACCESS_EXE = {
     0x10: "PAGE_EXECUTE",
