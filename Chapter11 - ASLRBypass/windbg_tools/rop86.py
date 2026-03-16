@@ -202,13 +202,15 @@ if __name__ == "__main__":
             else:
                 gadgets.append((0, 0xFFFFFFFF, line))  # Headers or other non-gadget lines
 
-        # Sort by score descending if requested, otherwise by offset ascending
+        # Sort by score descending if requested, otherwise keep original order
         if sort_by_score:
             gadgets.sort(key=lambda x: x[0], reverse=True)
-        else:
-            gadgets.sort(key=lambda x: x[1])
 
         with open(output_file, "w") as f:
+            if sort_by_score:
+                f.write("*" * 64 + "\n")
+                f.write("this has been sorted".center(64) + "\n")
+                f.write("*" * 64 + "\n\n")
             for score, offset, line in gadgets:
                 f.write(line + "\n")
     except FileNotFoundError:
