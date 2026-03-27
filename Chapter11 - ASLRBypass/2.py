@@ -198,12 +198,13 @@ import socket
 import sys
 from struct import pack
 
+
+
 from colorama import Back, Fore, Style, init
-from modules.msfvenom_module import generatePayload
 from modules.shellcode import getShellcode
-from numpy import byte
-from rpyc import lib
-from win32comext import shell
+from Payload import Payload
+
+
 
 DEBUG = True
 BASE_ADDR_BAD = False
@@ -211,14 +212,6 @@ init()
 
 
 bad_chars = [0x00, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x20]
-
-
-def checkBadChars(data):
-    # Iterate over bytes in the data and check for bad characters
-    for byte in data:
-        if byte in bad_chars:
-            return True
-    return False
 
 
 def sendMalBuff(buf, socketTup):
@@ -313,71 +306,6 @@ def leakFunctionAddress(func, socketTup):
     # Return the address only
     return functionAddress
 
-
-def printBuffer(buf, width="db"):
-    if width == "db":
-        w = 1
-        groups_per_line = 16
-    elif width == "dw":
-        w = 2
-        groups_per_line = 8
-    elif width == "dd":
-        w = 4
-        groups_per_line = 4
-    else:
-        print(f"ERR: Invalid width {width}")
-        exit(-1)
-    bytes_per_line = groups_per_line * w
-    for i in range(0, len(buf), bytes_per_line):
-        print(
-            Fore.YELLOW + f"\t" + f"{i:04x} - {min(i+bytes_per_line, len(buf)):04x}: " + Style.RESET_ALL,
-            end="",
-        )
-        for g in range(groups_per_line):
-            start = i + g * w
-            if start >= len(buf):
-                break
-            if width == "db":
-                for j in range(w):
-                    if start + j < len(buf):
-                        byte_val = buf[start + j]
-                        if byte_val in bad_chars:
-                            print(f"{Fore.RED}{Back.WHITE}{byte_val:02x}{Style.RESET_ALL}", end=" ")
-                        else:
-                            print(f"{byte_val:02x}", end=" ")
-                    else:
-                        print("  ", end="")
-            else:
-                val = 0
-                bad_in_group = False
-                for j in range(w):
-                    if start + j < len(buf):
-                        val |= buf[start + j] << (8 * (w - 1 - j))
-                        if buf[start + j] in bad_chars:
-                            bad_in_group = True
-                if width == "dw":
-                    if bad_in_group:
-                        print(f"{Fore.RED}{Back.WHITE}{val:04x}{Style.RESET_ALL}", end=" ")
-                    else:
-                        print(f"{val:04x}", end=" ")
-                elif width == "dd":
-                    if bad_in_group:
-                        print(f"{Fore.RED}{Back.WHITE}{val:08x}{Style.RESET_ALL}", end=" ")
-                    else:
-                        print(f"{val:08x}", end=" ")
-        # Add ASCII representation
-        print(" ", end="")
-        for j in range(bytes_per_line):
-            idx = i + j
-            if idx < len(buf):
-                byte_val = buf[idx]
-                if 32 <= byte_val <= 126:
-                    print(chr(byte_val), end="")
-                else:
-                    print(".", end="")
-            else:
-                print(" ", end="")
-        print()
 
 
 def parseResponse(response):
