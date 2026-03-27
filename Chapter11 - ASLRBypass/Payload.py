@@ -1,20 +1,23 @@
 from colorama import Back, Fore, Style
+from pwnlib.util.fiddling import unhex
+from pwnlib.util.packing import flat, p32
 
 
 class Payload:
-    def __init__(self, payload=None, badchars=None):
+    def __init__(self, payload=None, badchars=None, logLevel="WARN"):
         self.payload = bytearray()  # Holds the Payload
         self.alignment = 4  # x86 stack alignment boundary
         self.badchars = set(badchars or [])  # Use set for O(1) membership checks
-        self._logLevel = "INFO"  # Internal flag for setting logLevel
+        self._logLevel = "WARN"  # Internal flag for setting logLevel
         self.endianess = "L"  # L = little-endian, B = big-endian
+        self.setLogLevel(logLevel)
 
         # Constructor supports both paths: with initial payload or empty start.
         if payload is not None and len(payload) > 0:
-            self._log("Got constructor payload")
+            self._log("Got constructor payload", "INFO")
             self.append(payload)
         else:
-            self._log("No constructor payload")
+            self._log("No constructor payload", "INFO")
 
     def append(self, data=None):
         # Optional arg path: calling _append() should be a safe no-op.
@@ -44,7 +47,7 @@ class Payload:
         return True
 
     def setBadChars(self, badCharsList):
-        self.badchars = badCharsList
+        self.badchars = set(badCharsList or [])
         self._log(f"Bad chars set! New badchars are:\n{self.badchars}")
         self._testBadChars()
 
@@ -59,21 +62,32 @@ class Payload:
 
     def setLogLevel(self, logLevel):
         normalized = str(logLevel).casefold()
-        if normalized not in ["info", "warn", "error", "debug"]:
-            self._log("Wrong logLevel set, using DEBUG", "WARN")
-            self._logLevel = "DEBUG"
-        else:
-            self._logLevel = normalized.upper()
+        level_aliases = {
+            "debug": "DEBUG",
+            "info": "INFO",
+            "warn": "WARN",
+            "warning": "WARN",
+            "error": "ERROR",
+        }
+        resolved_level = level_aliases.get(normalized)
+        if resolved_level is None:
+            self._log(f"Wrong logLevel '{logLevel}', using WARN", "WARN")
+            self._logLevel = "WARN"
+            return
+        self._logLevel = resolved_level
 
     def _coerceToBytes(self, data):
         self.setEndianess(self.endianess)
+        endian = "little" if self.endianess == "L" else "big"
 
         if isinstance(data, int):
             if data < 0 or data > 0xFFFFFFFF:
                 raise ValueError("int value must fit in an unsigned 32-bit dword")
-            if self.endianess == "L":
-                return data.to_bytes(4, byteorder="little", signed=False)
-            return data.to_bytes(4, byteorder="big", signed=False)
+            return p32(data, endian=endian, sign=False)
+
+        if isinstance(data, (list, tuple)):
+            # Flatten mixed ROP-like inputs: ints/bytes/bytearrays in one call.
+            return flat(data, word_size=32, endianness=endian, sign=False)
 
         if isinstance(data, str):
             cleaned = data.strip().replace(" ", "").replace("_", "")
@@ -84,7 +98,7 @@ class Payload:
                 return b""
             if len(cleaned) % 2 != 0:
                 raise ValueError("hex string length must be even")
-            raw = bytes.fromhex(cleaned)
+            raw = unhex(cleaned)
             if self.endianess == "L":
                 return b"".join(raw[i : i + 4][::-1] for i in range(0, len(raw), 4))
             return raw
@@ -92,7 +106,7 @@ class Payload:
         if isinstance(data, (bytes, bytearray)):
             return bytes(data)
 
-        raise TypeError("append expects bytes, bytearray, int, or hex string")
+        raise TypeError("append expects bytes, bytearray, int, list/tuple, or hex string")
 
     def _testAlignment(self, data=None) -> bool:
 
@@ -136,19 +150,25 @@ class Payload:
         return True
 
     def _log(self, message, level="INFO"):
-        colorCode = ""
+        severity = {"debug": 10, "info": 20, "warn": 30, "warning": 30, "error": 40}
         normalized_level = str(level).casefold()
-        if normalized_level == "error":
-            colorCode = f"{Fore.LIGHTRED_EX}{Style.BRIGHT}[!!!] "
-        elif normalized_level == "warn":
-            colorCode = f"{Fore.LIGHTRED_EX}[!] "
-        elif normalized_level == "debug":
-            colorCode = f"{Fore.LIGHTYELLOW_EX}[>] "
-        elif normalized_level == "info":
-            colorCode = f"{Fore.MAGENTA}[o] "
-        else:
-            print(f"Invalid Level Type passed")
+        configured_level = str(self._logLevel).casefold()
 
+        # Fallbacks keep logging resilient if a level is set directly.
+        msg_priority = severity.get(normalized_level, severity["info"])
+        threshold = severity.get(configured_level, severity["info"])
+
+        # Only print messages at or above configured severity.
+        if msg_priority < threshold:
+            return
+
+        color_map = {
+            "error": f"{Fore.LIGHTRED_EX}{Style.BRIGHT}[!!!] ",
+            "warn": f"{Fore.LIGHTYELLOW_EX}[!] ",
+            "debug": f"{Back.LIGHTGREEN_EX}[>] ",
+            "info": f"{Fore.MAGENTA}[o] ",
+        }
+        colorCode = color_map.get(normalized_level, color_map["info"])
         print(f"{colorCode}{message}{Style.RESET_ALL}")
 
     def _printBuffer(self, buf=None, width="dd"):
