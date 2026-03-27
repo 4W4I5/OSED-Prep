@@ -42,8 +42,9 @@ class Payload:
 
         # extend adds a byte sequence, unlike append which expects one int byte.
         self.payload.extend(data_bytes)
-        self._log("Payload after append:")
-        self._printBuffer(width="dd")
+        self._log("Payload after append:", "DEBUG")
+        if str(self._logLevel).casefold() == "debug":
+            self._printBuffer(width="dd")
         return True
 
     def setBadChars(self, badCharsList):

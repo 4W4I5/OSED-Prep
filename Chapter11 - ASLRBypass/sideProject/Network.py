@@ -1,0 +1,1 @@
+# This is the class to send over buffer/process responses
