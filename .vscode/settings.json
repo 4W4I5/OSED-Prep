@@ -1,5 +1,7 @@
 {
   "python.analysis.typeCheckingMode": "off",
   "python.analysis.extraPaths": ["./modules"],
-  "python.analysis.autoImportCompletions": true
+  "python.analysis.autoImportCompletions": true,
+  "codeQL.githubDatabase.download": "never",
+  "sarif-viewer.connectToGithubCodeScanning": "off"
 }
