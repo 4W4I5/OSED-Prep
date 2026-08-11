@@ -9,7 +9,7 @@ from modules.msfvenom_module import generatePayload
 from modules.shellcode import getShellcode
 
 init()
-bad_chars = [0x00, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x20]
+bad_chars = [0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x20]
 
 
 def checkBadChars(data):
@@ -149,6 +149,7 @@ def printBuffer(buf, width="db"):
     else:
         log(f"Invalid width {width}", level="-")
         exit(-1)
+
     bytes_per_line = groups_per_line * w
     for i in range(0, len(buf), bytes_per_line):
         print(
@@ -163,8 +164,14 @@ def printBuffer(buf, width="db"):
                 for j in range(w):
                     if start + j < len(buf):
                         byte_val = buf[start + j]
+                        chunk = buf[start + j : start + j + 1]  # Single byte slice or adapt based on checkNullBytes
+
+                        # Priority 1: Check bad char first
                         if byte_val in bad_chars:
                             print(f"{Fore.RED}{Back.WHITE}{byte_val:02x}{Style.RESET_ALL}", end=" ")
+                        # Priority 2: Run checkNullBytes after bad char check
+                        elif not checkNullBytes(buf[start + j : start + j + 2]):
+                            print(f"{Fore.CYAN}{Back.WHITE}{byte_val:02x}{Style.RESET_ALL}", end=" ")
                         else:
                             print(f"{byte_val:02x}", end=" ")
                     else:
@@ -172,21 +179,35 @@ def printBuffer(buf, width="db"):
             else:
                 val = 0
                 bad_in_group = False
+                null_in_group = False
                 for j in range(w):
                     if start + j < len(buf):
-                        val |= buf[start + j] << (8 * (w - 1 - j))
-                        if buf[start + j] in bad_chars:
+                        b_val = buf[start + j]
+                        val |= b_val << (8 * (w - 1 - j))
+                        if b_val in bad_chars:
                             bad_in_group = True
+
+                # Run checkNullBytes on the group chunk
+                group_chunk = buf[start : start + w]
+                if not checkNullBytes(group_chunk):
+                    null_in_group = True
+
+                # Format wide groups (dw, dd) with priority on bad chars over nulls
                 if width == "dw":
                     if bad_in_group:
                         print(f"{Fore.RED}{Back.WHITE}{val:04x}{Style.RESET_ALL}", end=" ")
+                    elif null_in_group:
+                        print(f"{Fore.CYAN}{Back.WHITE}{val:04x}{Style.RESET_ALL}", end=" ")
                     else:
                         print(f"{val:04x}", end=" ")
                 elif width == "dd":
                     if bad_in_group:
                         print(f"{Fore.RED}{Back.WHITE}{val:08x}{Style.RESET_ALL}", end=" ")
+                    elif null_in_group:
+                        print(f"{Fore.CYAN}{Back.WHITE}{val:08x}{Style.RESET_ALL}", end=" ")
                     else:
                         print(f"{val:08x}", end=" ")
+
         # Add ASCII representation
         print(" ", end="")
         for j in range(bytes_per_line):
@@ -223,7 +244,19 @@ def parse_args():
 
 def repeat_bytes(pattern, length):
     if isinstance(pattern, str):
-        pattern = bytes.fromhex(pattern.replace("0x", ""))
+        # Check if the string looks like a hex string (e.g., contains only hex characters and even length, or starts with 0x)
+        clean_pattern = pattern.replace("0x", "")
+        is_hex = all(c in "0123456789abcdefABCDEF" for c in clean_pattern) and len(clean_pattern) % 2 == 0
+
+        if is_hex and len(clean_pattern) > 0:
+            try:
+                pattern = bytes.fromhex(clean_pattern)
+            except ValueError:
+                # Fallback to ASCII bytes if hex conversion fails despite matching criteria
+                pattern = pattern.encode("utf-8")
+        else:
+            # Treat pure text strings as ASCII/UTF-8 bytes
+            pattern = pattern.encode("utf-8")
 
     if not pattern:
         raise ValueError("Pattern cannot be empty")
