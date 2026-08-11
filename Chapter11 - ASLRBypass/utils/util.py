@@ -12,6 +12,13 @@ init()
 bad_chars = [0x00, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x20]
 
 
+def checkBadChars(data):
+    # Iterate over bytes in the data and check for bad characters
+    for byte in data:
+        if byte in bad_chars:
+            return True
+    return False
+
 def log(msg: str, indent: int = 0, level: str = "*"):
     """Prints a message with a given indentation and log level."""
     indent_str = "\t" * indent
@@ -25,13 +32,6 @@ def log(msg: str, indent: int = 0, level: str = "*"):
     prefix, color = level_map.get(level, (f"[{level}]", Fore.WHITE))
     print(f"{color}{indent_str}{prefix} {msg}{Style.RESET_ALL}")
 
-
-def checkBadChars(data):
-    # Iterate over bytes in the data and check for bad characters
-    for byte in data:
-        if byte in bad_chars:
-            return True
-    return False
 
 
 def checkNullBytes(data) -> bool:
