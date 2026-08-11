@@ -33,10 +33,12 @@ def log(msg: str, indent: int = 0, level: str = "*"):
     print(f"{color}{indent_str}{prefix} {msg}{Style.RESET_ALL}")
 
 
-
-def checkNullBytes(data) -> bool:
-    """Check if the given data contains null bytes. Iterate 0x00 at a time and return True if found, else False. Ensures bytes are read in groups of 2"""
-    for i in range(0, len(data), 2):
+def checkNullBytes(data: bytes) -> bool:
+    """Check if the given data contains null bytes. Iterate across
+    overlapping 2-byte windows and return False if any b'\\x00\\x00'
+    or unaligned null byte pair is found, else True.
+    """
+    for i in range(len(data) - 1):
         if data[i : i + 2] == b"\x00\x00":
             return False
     return True
