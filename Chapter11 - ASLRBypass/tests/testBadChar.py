@@ -11,7 +11,9 @@ class TestNullBytesCheck(unittest.TestCase):
             b"\x0b\x03\x41\x41",  # Should not be flagged
             b"\x41\x42\x43\x44",  # Standard ASCII 'ABCD'
             b"\x03\x41\x41",  # Odd length, no double nulls
-            b"\x3a\x20\x4f\x46"
+            b"\x3a\x20\x4f\x46",
+            b"\x03\x02\x08\xd6",
+            b"\xd6\x08\x02\x03",
         ]
 
         for data in valid_cases:
