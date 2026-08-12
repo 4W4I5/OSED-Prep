@@ -1,12 +1,9 @@
 import argparse
 import socket
-import struct
 import sys
 from struct import pack
 
 from colorama import Back, Fore, Style, init
-from modules.msfvenom_module import generatePayload
-from modules.shellcode import getShellcode
 
 init()
 bad_chars = [0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x20]
@@ -18,6 +15,7 @@ def checkBadChars(data):
         if byte in bad_chars:
             return True
     return False
+
 
 def log(msg: str, indent: int = 0, level: str = "*"):
     """Prints a message with a given indentation and log level."""
