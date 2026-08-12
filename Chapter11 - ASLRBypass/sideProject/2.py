@@ -198,7 +198,7 @@ import socket
 import sys
 
 from colorama import Back, Fore, Style, init
-from modules.shellcode import getShellcode
+from modules.shellcode_module import getShellcode
 from Payload import Payload
 
 from pwn import *
