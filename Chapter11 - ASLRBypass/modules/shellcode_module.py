@@ -32,44 +32,60 @@ buf += b"\xbf\x96\x6a\x00\x53\xff\xd5"
 
 
 from .util_module import log
+import sys
 
 
-def getShellcode(encoded=False, bad_chars=None):
+def getShellcode(encoded=False, bad_chars=None, debug=False):
     if not encoded:
         return buf
-
     if not bad_chars:
         log("No bad characters provided for encoding.", level="-")
         return buf, []
-
     bad_chars = set(bad_chars)
     encoded_shellcode = bytearray(buf)
     replacements = []
-
-    for index, original in enumerate(encoded_shellcode):
-        if original not in bad_chars:
-            continue
-
-        # Find a replacement byte that is not a bad character
-        # and has a safe correction value.
-        for replacement in range(256):
-            if replacement in bad_chars:
+    try:
+        for index, original in enumerate(encoded_shellcode):
+            if original not in bad_chars:
                 continue
-
-            correction = (original - replacement) & 0xFF
-
-            if correction in bad_chars:
-                continue
-
-            replacements.append({"index": index, "original": original, "replacement": replacement, "correction": correction})
-
-            encoded_shellcode[index] = replacement
-            break
-        else:
-            raise ValueError(f"No valid replacement found for byte 0x{original:02x} " f"at index {index}")
-
-    log(f"Replaced {len(replacements)} bad characters in shellcode.", level="+")
+            # Find a replacement byte that is not a bad character
+            # and has a safe correction value.
+            for replacement in range(256):
+                # Check if the replacement byte is a bad character
+                if replacement in bad_chars:
+                    continue
+                # Calculate the correction value for the replacement byte
+                correction = (original - replacement) & 0xFF
+                # Check if the correction value is a bad character
+                if correction in bad_chars:
+                    continue
+                # If we reach this point, we have found a valid replacement
+                replacements.append({"index": index, "original": original, "replacement": replacement, "correction": correction})
+                # Replace the original byte with the replacement byte in the encoded shellcode
+                encoded_shellcode[index] = replacement
+                # Log the current index
+                if debug:
+                    log(f"Processing byte at index {index}")
+                break
+            else:
+                raise ValueError(f"No valid replacement found for byte 0x{original:02x} " f"at index {index}")
+        if replacements:
+            log(f"Replaced {len(replacements)} bad characters in shellcode.", level="*")
+        if debug and replacements:
+            log(f"Replacements:", level="o", indent=1)
+            i = 1
+            for rep in replacements:
+                print(
+                    f"\t\t[{i:02}] Index {rep['index']:03}: 0x{rep['original']:02x} -> 0x{rep['replacement']:02x} "
+                    f"(correction: 0x{rep['correction']:02x})",
+                )
+                i += 1
+    except ValueError as e:
+        # Log the error and exit the program
+        log(str(e), level="-")
+        sys.exit(1)
 
     return bytes(encoded_shellcode), replacements
 
-getShellcode(encoded=True, bad_chars=[0x00, 0x0A, 0x0B, 0x0C, 0x0D, 0x20])
+
+# getShellcode(encoded=True, bad_chars=list(range(0, 256)), debug=True)
