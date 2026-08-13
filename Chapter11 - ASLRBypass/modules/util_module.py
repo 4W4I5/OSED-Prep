@@ -18,7 +18,12 @@ def checkBadChars(data):
 
 
 def log(msg: str, indent: int = 0, level: str = "*"):
-    """Prints a message with a given indentation and log level."""
+    """
+    Prints a message with a given indentation and log level.
+    :param msg: The message to log.
+    :param indent: The number of tabs to indent the message.
+    :param level: `"+": Success, "-": Error, "*": Info, "!": Warning, "!!!": Critical, "o": Normal`
+    """
     indent_str = "\t" * indent
     level_map = {
         "+": ("[+]", Fore.GREEN),
@@ -26,6 +31,7 @@ def log(msg: str, indent: int = 0, level: str = "*"):
         "!": ("[!]", Fore.YELLOW),
         "!!!": ("[!!!]", Fore.LIGHTRED_EX),
         "*": ("[*]", Fore.CYAN),
+        "o": ("[o]", Fore.WHITE),
     }
     prefix, color = level_map.get(level, (f"[{level}]", Fore.WHITE))
     print(f"{color}{indent_str}{prefix} {msg}{Style.RESET_ALL}")
