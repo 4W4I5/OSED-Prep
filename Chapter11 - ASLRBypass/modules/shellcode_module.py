@@ -36,41 +36,53 @@ import sys
 
 
 def getShellcode(encoded=False, bad_chars=None, debug=False):
+
     if not encoded:
         return buf
+
     if not bad_chars:
         log("No bad characters provided for encoding.", level="-")
         return buf, []
     bad_chars = set(bad_chars)
     encoded_shellcode = bytearray(buf)
     replacements = []
+
     try:
         for index, original in enumerate(encoded_shellcode):
             if original not in bad_chars:
                 continue
-            # Find a replacement byte that is not a bad character
-            # and has a safe correction value.
+            # Find a replacement byte that is not a bad character and has a safe correction value.
+
             for replacement in range(256):
+
                 # Check if the replacement byte is a bad character
                 if replacement in bad_chars:
                     continue
+
                 # Calculate the correction value for the replacement byte
                 correction = (original - replacement) & 0xFF
+
                 # Check if the correction value is a bad character
                 if correction in bad_chars:
                     continue
+
                 # If we reach this point, we have found a valid replacement
                 replacements.append({"index": index, "original": original, "replacement": replacement, "correction": correction})
+
                 # Replace the original byte with the replacement byte in the encoded shellcode
                 encoded_shellcode[index] = replacement
+
                 # Log the current index
                 if debug:
                     log(f"Processing byte at index {index}")
+
                 break
             else:
                 raise ValueError(f"No valid replacement found for byte 0x{original:02x} " f"at index {index}")
+
         if replacements:
             log(f"Replaced {len(replacements)} bad characters in shellcode.", level="*")
+
         if debug and replacements:
             log(f"Replacements:", level="o", indent=1)
             i = 1
