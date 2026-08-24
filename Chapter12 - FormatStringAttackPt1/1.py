@@ -8,6 +8,9 @@ import struct
 import sys
 from struct import pack
 
+from pwn import *
+
+
 from modules.msfvenom_module import generatePayload
 from modules.shellcode_module import generateShellcodeDecoder, getShellcode
 
